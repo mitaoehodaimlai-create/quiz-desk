@@ -243,6 +243,7 @@ const S = {
   preStart: null,
   auth: null, staffLoaded: false, isOwner: false, unlocked: false, lockErr: '', fails: 0, lockedUntil: 0, confirmReset: false, pwPanel: false,
   resultsQuiz: null, confirmDelete: null,
+  la: { scope: 'all', lo: 40, hi: 75 },   // learner analytics: slow below lo %, advanced from hi %
   roll: store('qd.roll') || '', take: null, studentScreen: 'list', reviewQuiz: null,
 };
 let dirty = false;
@@ -591,7 +592,7 @@ function render(){
   renderTabs();
   const v = $('#view');
   if (!S.ready) return;
-  watchSubs(S.isTeacher && S.view === 'teacher' && S.unlocked && (S.tab === 'quizzes' || S.tab === 'results'));
+  watchSubs(S.isTeacher && S.view === 'teacher' && S.unlocked && (S.tab === 'quizzes' || S.tab === 'results' || S.tab === 'learners'));
   if (S.view === 'teacher') v.innerHTML = notices() + (S.unlocked ? passwordPanel() + teacherView() : lockView());
   else v.innerHTML = notices() + studentView();
   bind();
@@ -610,7 +611,7 @@ function renderTabs(){
     end.innerHTML = `<span class="role">Faculty · locked</span><button class="btn sm" data-act="as-student">Student view</button>`;
   } else if (S.view === 'teacher'){
     const live = S.quizzes.filter(q => q.status === 'live').length;
-    const t = [['students', 'Students', S.roster.length], ['bank', 'Question bank', S.bank.length], ['quizzes', 'Quizzes', S.quizzes.length], ['results', 'Results', null]];
+    const t = [['students', 'Students', S.roster.length], ['bank', 'Question bank', S.bank.length], ['quizzes', 'Quizzes', S.quizzes.length], ['results', 'Results', null], ['learners', 'Learners', null]];
     tabs.innerHTML = t.map(([k, l, c]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${l}${c !== null ? `<span class="count">${c}</span>` : ''}</button>`).join('');
     end.innerHTML = `${live ? `<span class="pill live">${live} live</span>` : ''}<span class="role">Faculty</span><button class="btn sm" data-act="pw-panel">Password</button><button class="btn sm" data-act="lock">Lock</button><button class="btn sm" data-act="as-student">Student view</button>`;
   } else {
@@ -687,6 +688,7 @@ function teacherView(){
   if (S.tab === 'bank') return bankView();
   if (S.tab === 'quizzes') return quizzesView();
   if (S.tab === 'results') return resultsView();
+  if (S.tab === 'learners') return learnersView();
   return studentsView();
 }
 function uploader(kind){
@@ -842,6 +844,94 @@ function resultsView(){
     <section class="panel"><div><div class="label">Item analysis · share of submitted students who got each question right</div><h3>Question accuracy</h3></div>
       ${done.length ? `<div class="bars">${perQ.map((p, i) => `<div class="barrow" title="${esc(p.q.text)}"><span class="mono">Q${i + 1}</span><div class="track"><i class="${p.rate < .4 ? 'low' : ''}" style="width:${Math.round(p.rate * 100)}%"></i></div><span class="mono" style="text-align:right">${Math.round(p.rate * 100)}%</span></div>`).join('')}</div>
       <p class="small muted">Red bars are under 40%: worth revisiting in class. Hover a row to see the question.</p>` : '<p class="muted">Appears after the first submission.</p>'}</section>`;
+}
+
+/* ---------- learner analytics ----------
+   Level is judged on marks earned before proctoring deductions, since deductions measure
+   conduct, not learning. "All quizzes" averages each student's percentage across every
+   quiz they submitted. */
+const LEVELS = [
+  { k: 'slow', label: 'Slow learners', color: 'var(--bad)', soft: 'var(--bad-soft)', action: 'Remedial session on the weakest topics, extra practice quizzes, and a follow-up re-test.' },
+  { k: 'average', label: 'Average learners', color: 'var(--warn)', soft: 'var(--warn-soft)', action: 'Targeted practice on the weak topics shown below, and peer study with advanced learners.' },
+  { k: 'advanced', label: 'Advanced learners', color: 'var(--ok)', soft: 'var(--ok-soft)', action: 'Content beyond the syllabus, harder questions, projects, and peer mentoring of slow learners.' },
+];
+function learnerData(){
+  const { scope, lo, hi } = S.la;
+  const quizzes = scope === 'all' ? S.quizzes : S.quizzes.filter(q => q.id === scope);
+  const per = new Map();
+  for (const q of quizzes){
+    const key = S.keys[q.id]?.answers || q.key || {};
+    for (const sub of S.subs){
+      const a = sub.attempts?.[q.id]; if (!a?.submittedAt) continue;
+      const e = per.get(a.roll) || { roll: a.roll, pcts: [], topic: {} };
+      let raw = 0;
+      for (const x of q.questions){
+        const ok = a.answers?.[x.id] === key[x.id], t = x.topic || 'General';
+        if (ok) raw += +x.marks || 1;
+        e.topic[t] = e.topic[t] || { c: 0, n: 0 }; e.topic[t].n++; if (ok) e.topic[t].c++;
+      }
+      e.pcts.push(pct(raw, q.totalMarks)); per.set(a.roll, e);
+    }
+  }
+  const rm = new Map(S.roster.map(s => [s.roll, s]));
+  const rows = [...per.values()].map(e => {
+    const avg = Math.round(e.pcts.reduce((s, x) => s + x, 0) / e.pcts.length * 10) / 10;
+    const ts = Object.entries(e.topic).map(([t, v]) => ({ t, acc: v.c / v.n })).sort((a, b) => a.acc - b.acc);
+    return { ...e, name: rm.get(e.roll)?.name || '', division: rm.get(e.roll)?.division || '', avg, n: e.pcts.length,
+      level: avg < lo ? 'slow' : avg >= hi ? 'advanced' : 'average', weakest: ts[0], strongest: ts[ts.length - 1] };
+  }).sort((a, b) => a.avg - b.avg);
+  const assigned = scope === 'all' ? S.roster.map(s => s.roll) : (quizzes[0]?.allowedRolls || []);
+  const noData = assigned.filter(r => !per.has(r));
+  const topics = [...new Set(quizzes.flatMap(q => q.questions.map(x => x.topic || 'General')))].sort();
+  const topicAcc = (list, t) => { let c = 0, n = 0; list.forEach(r => { const v = r.topic[t]; if (v){ c += v.c; n += v.n; } }); return n ? c / n : null; };
+  return { rows, noData, topics, topicAcc, quizzes };
+}
+function learnersView(){
+  if (!S.quizzes.length) return `<section class="panel"><div class="empty"><h3>No quizzes yet</h3><p>Learner levels appear once students submit quizzes.</p></div></section>`;
+  if (S.la.scope !== 'all' && !S.quizzes.some(q => q.id === S.la.scope)) S.la.scope = 'all';
+  const d = learnerData(), total = d.rows.length;
+  const by = Object.fromEntries(LEVELS.map(L => [L.k, d.rows.filter(r => r.level === L.k)]));
+  const share = k => total ? Math.round(by[k].length / total * 100) : 0;
+  const accCell = a => a === null ? '<td class="num muted">—</td>' : `<td class="num" style="${a < .4 ? 'color:var(--bad);font-weight:600' : ''}">${Math.round(a * 100)}%</td>`;
+  const controls = `<div class="fields" style="max-width:640px">
+      <label class="field"><span>Based on</span><select id="la-scope"><option value="all">All quizzes (average)</option>${S.quizzes.map(q => `<option value="${q.id}" ${S.la.scope === q.id ? 'selected' : ''}>${esc(q.title)}</option>`).join('')}</select></label>
+      <label class="field"><span>Slow below (%)</span><input type="number" id="la-lo" min="0" max="100" value="${S.la.lo}"></label>
+      <label class="field"><span>Advanced from (%)</span><input type="number" id="la-hi" min="0" max="100" value="${S.la.hi}"></label></div>`;
+  const head = `<section class="panel"><div class="panel-head"><div><div class="label">Learner analytics · marks before proctoring deductions</div><h2>Slow, average and advanced learners</h2></div>
+      <button class="btn" data-act="la-export" ${total ? '' : 'disabled'}>Export CSV</button></div>${controls}`;
+  if (!total) return head + `<div class="empty"><h3>No submitted attempts yet</h3><p>Students are grouped here after they submit.</p></div></section>`;
+  const dist = `<div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--line)" role="img" aria-label="${LEVELS.map(L => `${L.label}: ${by[L.k].length}`).join(', ')}">
+        ${LEVELS.map(L => by[L.k].length ? `<div style="width:${by[L.k].length / total * 100}%;background:${L.color}" title="${L.label}: ${by[L.k].length}"></div>` : '').join('')}</div>
+      <div class="legend">${LEVELS.map(L => `<span><i style="background:${L.color};border-color:${L.color}"></i>${L.label} <b class="mono">${by[L.k].length}</b> (${share(L.k)}%)</span>`).join('')}${d.noData.length ? `<span><i></i>No attempt <b class="mono">${d.noData.length}</b></span>` : ''}</div></div>`;
+  const stats = `<div class="stats">${LEVELS.map(L => { const g = by[L.k], avg = g.length ? (g.reduce((s, r) => s + r.avg, 0) / g.length).toFixed(1) + '%' : '—';
+      return `<div class="stat" style="border-color:${L.color}"><span class="label" style="color:${L.color}">${L.label}</span><b>${g.length}</b><span class="small muted">${L.k === 'slow' ? `below ${S.la.lo}%` : L.k === 'advanced' ? `${S.la.hi}% and above` : `${S.la.lo}–${S.la.hi}%`} · group average ${avg}</span></div>`; }).join('')}</div>`;
+  const groups = LEVELS.map(L => { const g = by[L.k];
+    return `<section class="panel" style="border-top:3px solid ${L.color}"><div class="panel-head"><div><div class="label" style="color:${L.color}">${L.label} · ${g.length}</div><h3>${esc(L.action)}</h3></div></div>
+      ${g.length ? `<div class="tbl-wrap scroll" style="max-height:320px"><table><thead><tr><th>Roll No</th><th>Name</th><th class="num">Average</th><th class="num">Quizzes</th><th>Weakest topic</th><th>Strongest topic</th></tr></thead><tbody>
+        ${(L.k === 'advanced' ? g.slice().reverse() : g).map(r => `<tr><td class="mono">${esc(r.roll)}</td><td>${esc(r.name)}</td><td class="num">${r.avg}%</td><td class="num">${r.n}</td><td>${r.weakest ? `${esc(r.weakest.t)} <span class="small muted">${Math.round(r.weakest.acc * 100)}%</span>` : '—'}</td><td>${r.strongest ? `${esc(r.strongest.t)} <span class="small muted">${Math.round(r.strongest.acc * 100)}%</span>` : '—'}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="muted">No students in this group.</p>'}</section>`; }).join('');
+  const topicTable = `<section class="panel"><div><div class="label">Topic accuracy by learner level · red is under 40%</div><h3>Where each group needs help</h3></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Topic</th>${LEVELS.map(L => `<th class="num" style="color:${L.color}">${L.label.split(' ')[0]}</th>`).join('')}<th class="num">Whole class</th></tr></thead><tbody>
+      ${d.topics.map(t => `<tr><td>${esc(t)}</td>${LEVELS.map(L => accCell(d.topicAcc(by[L.k], t))).join('')}${accCell(d.topicAcc(d.rows, t))}</tr>`).join('')}
+    </tbody></table></div></section>`;
+  const rm = new Map(S.roster.map(s => [s.roll, s]));
+  const none = d.noData.length ? `<section class="panel"><div><div class="label">Not yet assessed · ${d.noData.length}</div><h3>No submitted attempt${S.la.scope === 'all' ? ' in any quiz' : ' for this quiz'}</h3></div>
+    <p class="small">${d.noData.map(r => `<span class="mono">${esc(r)}</span>${rm.get(r)?.name ? ' ' + esc(rm.get(r).name) : ''}`).join(' · ')}</p></section>` : '';
+  return head + dist + stats + `</section>` + groups + topicTable + none;
+}
+async function exportLearners(){
+  const d = learnerData();
+  const cell = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+  const label = Object.fromEntries(LEVELS.map(L => [L.k, L.label.replace(' learners', '')]));
+  const lines = [['Roll No', 'Name', 'Division', 'Learner level', 'Average %', 'Quizzes submitted', 'Weakest topic', 'Weakest topic %', 'Strongest topic', 'Strongest topic %'].join(',')];
+  d.rows.forEach(r => lines.push([r.roll, r.name, r.division, label[r.level], r.avg, r.n, r.weakest?.t || '', r.weakest ? Math.round(r.weakest.acc * 100) : '', r.strongest?.t || '', r.strongest ? Math.round(r.strongest.acc * 100) : ''].map(cell).join(',')));
+  const rm = new Map(S.roster.map(s => [s.roll, s]));
+  d.noData.forEach(r => lines.push([r, rm.get(r)?.name || '', rm.get(r)?.division || '', 'Not assessed', '', 0, '', '', '', ''].map(cell).join(',')));
+  lines.push('', `Thresholds,Slow below ${S.la.lo}%,Advanced from ${S.la.hi}%`, `Based on,${cell(S.la.scope === 'all' ? 'All quizzes (average)' : d.quizzes[0]?.title || '')}`);
+  const csv = lines.join('\n'), filename = `${GROUP.name.replace(/\s+/g, '-')}-learner-levels.csv`;
+  if (S.downloads){ try { await S.downloads.save({ filename, data: csv }); toast('Learner levels saved as CSV.'); return; } catch (e){ if (e?.code === 'declined') return; } }
+  try { await navigator.clipboard.writeText(csv); toast('Copied learner levels as CSV. Paste into Excel or Sheets.'); } catch { toast('Couldn\'t export from this view.'); }
 }
 
 /* ---------- student ---------- */
@@ -1043,6 +1133,9 @@ function bind(){
   document.querySelectorAll('[data-topic]').forEach(c => c.onchange = () => { const t = c.dataset.topic; S.builder.topics = c.checked ? [...S.builder.topics, t] : S.builder.topics.filter(x => x !== t); render(); });
   document.querySelectorAll('[data-div]').forEach(c => c.onchange = () => { const d = c.dataset.div; S.builder.divisions = c.checked ? [...S.builder.divisions, d] : S.builder.divisions.filter(x => x !== d); render(); });
   on('r-quiz', 'change', e => { S.resultsQuiz = e.target.value; render(); });
+  on('la-scope', 'change', e => { S.la.scope = e.target.value; render(); });
+  on('la-lo', 'change', e => { S.la.lo = Math.min(Math.max(0, +e.target.value || 0), S.la.hi); render(); });
+  on('la-hi', 'change', e => { S.la.hi = Math.max(Math.min(100, +e.target.value || 0), S.la.lo); render(); });
   on('s-roll', 'keydown', e => { if (e.key === 'Enter') act('set-roll'); });
   on('pw-enter', 'keydown', e => { if (e.key === 'Enter') act('pw-unlock'); });
   if (!S.unlocked) on('pw-new2', 'keydown', e => { if (e.key === 'Enter') act('pw-set'); });
@@ -1082,6 +1175,7 @@ async function act(a, el){
     case 'q-delete-ask': S.confirmDelete = id; render(); break;
     case 'q-delete-cancel': S.confirmDelete = null; render(); break;
     case 'q-delete': deleteQuiz(id); break;
+    case 'la-export': exportLearners(); break;
     case 'export': exportCSV(S.quizzes.find(q => q.id === S.resultsQuiz)); break;
     case 'set-roll': { const v = ($('#s-roll')?.value || '').trim().toUpperCase(); if (!v) return toast('Enter your roll number.');
       const known = S.index.some(q => q.allowedRolls.includes(v)); const anyLive = S.index.some(q => q.status === 'live');

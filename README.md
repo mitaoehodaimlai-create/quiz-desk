@@ -11,7 +11,8 @@ It runs as a [claude.ai Artifact](https://claude.ai): a single HTML page with a 
 - Upload a question bank: `Question, A, B, C, D, Answer, Topic, Difficulty, Marks`. Answer can be A–D, 1–4, or the option text. Students never see the answer key.
 - Build a quiz by drawing N random questions filtered by topic and difficulty, set a time limit, assign it to divisions, and shuffle questions and options per student.
 - Set a quiz live, close it, release results to students, or delete it.
-- Results: live ranking, who is answering now, who hasn't started, accuracy per question, proctoring violations, and CSV export.
+- Results: live ranking, who is answering now, who hasn't started, accuracy per question, tab switches with time away, proctoring violations, and CSV export.
+- Learner analytics: slow, average and advanced learners, from one quiz or averaged across all quizzes. The thresholds are adjustable (defaults: slow below 40%, advanced from 75%). Each student's weakest and strongest topic, topic accuracy for each level, students not yet assessed, a suggested action for each level, and a CSV export. Levels use marks before proctoring deductions.
 
 **Students**
 - A countdown timer, an OMR-style answer sheet, and mark-for-review. Answers save automatically and survive reloads and dropped connections.

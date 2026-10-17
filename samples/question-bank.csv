@@ -1,0 +1,11 @@
+Question,A,B,C,D,Answer,Topic,Difficulty,Marks
+Which activation function outputs values strictly between 0 and 1?,ReLU,Sigmoid,Tanh,Leaky ReLU,B,Deep Learning,Easy,1
+What does a high variance model typically suffer from?,Underfitting,Overfitting,Vanishing gradients,Class imbalance,B,Machine Learning,Easy,1
+Which loss is standard for multi-class classification with softmax outputs?,Mean squared error,Hinge loss,Categorical cross-entropy,Huber loss,C,Deep Learning,Medium,1
+Which technique randomly zeroes activations during training to reduce overfitting?,Batch normalization,Dropout,Weight decay,Early stopping,B,Deep Learning,Easy,1
+What problem do LSTM gates mainly address in RNNs?,Exploding memory use,Vanishing gradients over long sequences,Slow tokenization,Overfitting on short text,B,Deep Learning,Medium,2
+Which metric is most informative for a heavily imbalanced binary classifier?,Accuracy,F1 score,Mean absolute error,R squared,B,Machine Learning,Medium,1
+In the Transformer the scaled dot-product attention divides scores by,The number of heads,The sequence length,The square root of the key dimension,The batch size,C,NLP,Medium,2
+Which algorithm is unsupervised?,Logistic regression,Random forest,K-means,Support vector machine,C,Machine Learning,Easy,1
+In a GAN the discriminator is trained to,Generate realistic samples,Distinguish real from generated samples,Minimize reconstruction loss,Cluster latent codes,B,Generative AI,Easy,1
+Residual connections in deep networks mainly help by,Reducing parameters,Allowing gradients to flow through identity paths,Replacing activation functions,Removing the need for normalization,B,Deep Learning,Hard,2

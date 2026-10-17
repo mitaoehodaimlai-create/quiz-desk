@@ -1,0 +1,7 @@
+.DS_Store
+__pycache__/
+*.pyc
+# Real class lists and exported results contain student data; keep them out of git.
+data/
+results/
+*-results.csv

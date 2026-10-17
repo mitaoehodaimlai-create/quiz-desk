@@ -1,0 +1,1082 @@
+<title>Quiz Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* Layout: one working column under a slim top bar; faculty tabs on the left of the bar, OMR-sheet bubbles as the recurring motif. */
+:root{
+  --paper:#f4f5f8; --sheet:#ffffff; --ink:#17202d; --muted:#5b6677; --line:#dde1e9; --line-strong:#c6ccd8;
+  --pen:#2546b8; --pen-ink:#ffffff; --pen-soft:#e7ecfb;
+  --omr:#c0245e; --omr-soft:#fbe8ef;
+  --ok:#1d7a4c; --ok-soft:#e3f4ea; --warn:#9a5c00; --warn-soft:#fbf0dc; --bad:#b3261e; --bad-soft:#fbe5e3;
+  --display:"Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body:"IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --paper:#10141b; --sheet:#171c25; --ink:#e6e9ef; --muted:#9aa3b3; --line:#283040; --line-strong:#3a4456;
+  --pen:#8fa6ff; --pen-ink:#0e1430; --pen-soft:#1e2846;
+  --omr:#f2709f; --omr-soft:#3a1a27;
+  --ok:#5cc892; --ok-soft:#14301f; --warn:#e8ac4c; --warn-soft:#33270f; --bad:#ff8f86; --bad-soft:#3a1715;
+  color-scheme:dark; } }
+:root[data-theme="dark"]{
+  --paper:#10141b; --sheet:#171c25; --ink:#e6e9ef; --muted:#9aa3b3; --line:#283040; --line-strong:#3a4456;
+  --pen:#8fa6ff; --pen-ink:#0e1430; --pen-soft:#1e2846;
+  --omr:#f2709f; --omr-soft:#3a1a27;
+  --ok:#5cc892; --ok-soft:#14301f; --warn:#e8ac4c; --warn-soft:#33270f; --bad:#ff8f86; --bad-soft:#3a1715;
+  color-scheme:dark; }
+
+*{box-sizing:border-box}
+body{background:var(--paper); color:var(--ink); font-family:var(--body); font-size:15px; line-height:1.5}
+h1,h2,h3{font-family:var(--display); font-weight:700; line-height:1.15; text-wrap:balance; margin:0}
+h2{font-size:1.45rem} h3{font-size:1.08rem}
+p{margin:0}
+button,input,select,textarea{font:inherit; color:inherit}
+:focus-visible{outline:2px solid var(--pen); outline-offset:2px}
+.mono{font-family:var(--mono); font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.small{font-size:.86rem}
+.label{font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:600}
+
+/* top bar */
+.bar{position:sticky; top:env(safe-area-inset-top,0px); z-index:5; background:var(--sheet); border-bottom:1px solid var(--line)}
+.bar-in{max-width:1120px; margin:0 auto; padding-inline:16px; display:flex; align-items:center; gap:16px; min-height:58px; flex-wrap:wrap}
+.brand{display:flex; align-items:center; gap:10px; font-family:var(--display); font-weight:700; font-size:1.15rem}
+.brand-mark{display:grid; grid-template-columns:repeat(3,7px); gap:3px}
+.brand-mark i{width:7px; height:7px; border-radius:50%; border:1.5px solid var(--omr)}
+.brand-mark i.f{background:var(--omr)}
+.tabs{display:flex; gap:2px; flex-wrap:wrap}
+.tab{border:0; background:none; padding:8px 12px; border-radius:8px; cursor:pointer; color:var(--muted); font-weight:500}
+.tab:hover{background:var(--paper); color:var(--ink)}
+.tab[aria-selected="true"]{background:var(--pen-soft); color:var(--pen)}
+.tab .count{font-family:var(--mono); font-size:.78rem; margin-left:4px; opacity:.8}
+.bar-end{margin-left:auto; display:flex; gap:8px; align-items:center}
+.role{font-size:.78rem; padding:3px 9px; border-radius:99px; border:1px solid var(--line-strong); color:var(--muted)}
+
+main{max-width:1120px; margin:0 auto; padding-inline:16px; padding-block:24px 64px; display:flex; flex-direction:column; gap:20px}
+.notice{border:1px dashed var(--line-strong); border-radius:var(--r); padding:10px 14px; font-size:.88rem; color:var(--muted); background:var(--sheet)}
+
+.panel{background:var(--sheet); border:1px solid var(--line); border-radius:var(--r); padding:20px; display:flex; flex-direction:column; gap:14px; min-width:0}
+.panel-head{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap}
+.grid2{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.6fr); gap:20px; align-items:start}
+@media (max-width:860px){ .grid2{grid-template-columns:minmax(0,1fr)} }
+.row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+
+/* buttons & fields */
+.btn{border:1px solid var(--line-strong); background:var(--sheet); padding:8px 14px; border-radius:8px; cursor:pointer; font-weight:500; display:inline-flex; gap:6px; align-items:center; white-space:nowrap}
+.btn:hover{border-color:var(--ink)}
+.btn.primary{background:var(--pen); border-color:var(--pen); color:var(--pen-ink)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--bad); border-color:var(--bad)}
+.btn.ghost{border-color:transparent; background:none}
+.btn.ghost:hover{background:var(--paper)}
+.btn.sm{padding:4px 10px; font-size:.84rem}
+.btn:disabled{opacity:.45; cursor:not-allowed}
+.field{display:flex; flex-direction:column; gap:5px; min-width:0}
+.field > span{font-size:.82rem; font-weight:500; color:var(--muted)}
+input[type=text],input[type=number],input[type=search],select,textarea{border:1px solid var(--line-strong); background:var(--sheet); border-radius:8px; padding:8px 10px; width:100%; min-width:0}
+textarea{font-family:var(--mono); font-size:.82rem; min-height:120px; resize:vertical}
+.fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px}
+.check{display:flex; gap:8px; align-items:center; font-size:.9rem; cursor:pointer}
+
+/* drop zone */
+.drop{border:1.5px dashed var(--line-strong); border-radius:var(--r); padding:22px 16px; text-align:center; display:flex; flex-direction:column; gap:8px; align-items:center; cursor:pointer; background:var(--paper)}
+.drop.over{border-color:var(--pen); background:var(--pen-soft)}
+.drop strong{font-family:var(--display); font-size:1.05rem}
+.cols{display:flex; gap:6px; flex-wrap:wrap; justify-content:center}
+.chip{font-family:var(--mono); font-size:.75rem; padding:2px 7px; border-radius:5px; background:var(--sheet); border:1px solid var(--line)}
+.chip.opt{border-style:dashed; color:var(--muted)}
+
+/* pills */
+.pill{display:inline-flex; align-items:center; gap:5px; font-size:.75rem; font-weight:600; padding:2px 9px; border-radius:99px; letter-spacing:.02em; white-space:nowrap}
+.pill::before{content:""; width:6px; height:6px; border-radius:50%; background:currentColor}
+.pill.live{color:var(--ok); background:var(--ok-soft)}
+.pill.draft{color:var(--muted); background:var(--paper); border:1px solid var(--line)}
+.pill.closed{color:var(--warn); background:var(--warn-soft)}
+.pill.bad{color:var(--bad); background:var(--bad-soft)}
+.pill.info{color:var(--pen); background:var(--pen-soft)}
+.diff-easy{color:var(--ok)} .diff-medium{color:var(--warn)} .diff-hard{color:var(--bad)}
+
+/* tables */
+.tbl-wrap{overflow-x:auto; border:1px solid var(--line); border-radius:8px}
+table{border-collapse:collapse; width:100%; font-size:.9rem}
+th,td{text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); white-space:nowrap}
+th{font-size:.72rem; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); font-weight:600; background:var(--paper); position:sticky; top:0}
+td.wrap{white-space:normal; min-width:220px}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums}
+.scroll{max-height:440px; overflow:auto}
+
+.issues{display:flex; flex-direction:column; gap:4px; font-size:.86rem; max-height:150px; overflow:auto; padding:10px 12px; border-radius:8px; background:var(--warn-soft); color:var(--warn)}
+.issues.ok{background:var(--ok-soft); color:var(--ok)}
+
+/* stats */
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px}
+.stat{border:1px solid var(--line); border-radius:8px; padding:12px 14px; display:flex; flex-direction:column; gap:2px}
+.stat b{font-family:var(--display); font-size:1.6rem; font-weight:700; font-variant-numeric:tabular-nums}
+
+/* question cards in bank */
+.qlist{display:flex; flex-direction:column; gap:10px}
+.qcard{border:1px solid var(--line); border-radius:8px; padding:12px 14px; display:flex; flex-direction:column; gap:8px}
+.qcard-top{display:flex; gap:10px; align-items:flex-start; justify-content:space-between}
+.qmeta{display:flex; gap:10px; flex-wrap:wrap; font-size:.78rem; color:var(--muted)}
+.opts{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:4px 16px; font-size:.88rem}
+.opts div{display:flex; gap:8px; align-items:baseline}
+.opts .right{color:var(--ok); font-weight:600}
+
+/* OMR bubble */
+.bub{flex:none; width:26px; height:26px; border-radius:50%; border:1.5px solid var(--omr); color:var(--omr); display:inline-grid; place-items:center; font-family:var(--mono); font-size:.78rem; font-weight:500}
+.bub.sm{width:20px; height:20px; font-size:.68rem}
+.bub.fill{background:var(--omr); color:var(--sheet)}
+.bub.ok{border-color:var(--ok); color:var(--ok)} .bub.ok.fill{background:var(--ok); color:var(--sheet)}
+.bub.no{border-color:var(--bad); color:var(--bad)} .bub.no.fill{background:var(--bad); color:var(--sheet)}
+
+/* quiz cards */
+.quizzes{display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:14px}
+.qz{border:1px solid var(--line); border-radius:var(--r); padding:16px; display:flex; flex-direction:column; gap:10px; background:var(--sheet)}
+.qz-facts{display:flex; gap:14px; flex-wrap:wrap; font-size:.84rem; color:var(--muted)}
+.qz-facts b{color:var(--ink); font-family:var(--mono); font-weight:500}
+.qz-actions{display:flex; gap:6px; flex-wrap:wrap; margin-top:auto; padding-top:4px}
+
+.bars{display:flex; flex-direction:column; gap:6px}
+.barrow{display:grid; grid-template-columns:44px minmax(0,1fr) 46px; gap:10px; align-items:center; font-size:.84rem}
+.track{height:10px; background:var(--paper); border-radius:5px; overflow:hidden; border:1px solid var(--line)}
+.track i{display:block; height:100%; background:var(--pen)}
+.track i.low{background:var(--bad)}
+
+.empty{text-align:center; padding:28px 16px; color:var(--muted); display:flex; flex-direction:column; gap:10px; align-items:center}
+.empty h3{color:var(--ink)}
+
+/* student exam screen */
+.exam{display:grid; grid-template-columns:minmax(0,1fr) 260px; gap:20px; align-items:start}
+@media (max-width:820px){ .exam{grid-template-columns:minmax(0,1fr)} }
+.exam-head{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap}
+.timer{font-family:var(--mono); font-size:1.5rem; font-variant-numeric:tabular-nums; padding:4px 12px; border-radius:8px; border:1px solid var(--line-strong)}
+.timer.low{color:var(--bad); border-color:var(--bad); background:var(--bad-soft)}
+.qtext{font-size:1.12rem; line-height:1.55; white-space:pre-wrap}
+.choices{display:flex; flex-direction:column; gap:8px}
+.choice{display:flex; gap:12px; align-items:center; text-align:left; width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:var(--sheet); cursor:pointer}
+.choice:hover{border-color:var(--omr)}
+.choice[aria-pressed="true"]{border-color:var(--omr); background:var(--omr-soft)}
+.choice[aria-pressed="true"] .bub{background:var(--omr); color:var(--sheet)}
+.palette{display:grid; grid-template-columns:repeat(auto-fill,minmax(38px,1fr)); gap:6px}
+.pal{height:38px; border-radius:7px; border:1px solid var(--line-strong); background:var(--sheet); cursor:pointer; font-family:var(--mono); font-size:.85rem; position:relative}
+.pal.ans{background:var(--omr); border-color:var(--omr); color:var(--sheet)}
+.pal.cur{outline:2px solid var(--pen); outline-offset:1px}
+.pal.mark::after{content:""; position:absolute; top:3px; right:3px; width:7px; height:7px; border-radius:50%; background:var(--warn)}
+.legend{display:flex; gap:12px; flex-wrap:wrap; font-size:.78rem; color:var(--muted)}
+.legend span{display:inline-flex; gap:5px; align-items:center}
+.legend i{width:12px; height:12px; border-radius:3px; border:1px solid var(--line-strong); display:inline-block}
+.exam,.exam-head{-webkit-user-select:none; user-select:none}
+.warnbar{position:sticky; top:calc(env(safe-area-inset-top,0px) + 66px); z-index:4; display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:12px 16px; border-radius:var(--r); background:var(--bad-soft); color:var(--bad); border:1px solid var(--bad); font-size:.92rem}
+.warnbar div{min-width:0; flex:1 1 260px}
+.confirm{border:1px solid var(--omr); background:var(--omr-soft); border-radius:8px; padding:14px; display:flex; flex-direction:column; gap:10px}
+
+.review{display:flex; flex-direction:column; gap:10px}
+.review .qcard.right{border-left:3px solid var(--ok)}
+.review .qcard.wrong{border-left:3px solid var(--bad)}
+.scorebig{font-family:var(--display); font-size:3rem; font-weight:700; line-height:1}
+
+.toast{position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); background:var(--ink); color:var(--paper); padding:10px 16px; border-radius:8px; font-size:.9rem; z-index:20; max-width:calc(100% - 32px)}
+@media (prefers-reduced-motion:no-preference){ .toast{animation:up .2s ease-out} @keyframes up{from{transform:translate(-50%,8px); opacity:0}} }
+</style>
+
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><i class="f"></i><i></i><i></i><i></i><i class="f"></i><i></i></span>Quiz Desk <span class="role" id="groupChip" style="font-family:var(--body)"></span></div>
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+  <div class="bar-end" id="barEnd"></div>
+</div></header>
+<main id="view"><div class="empty"><h3>Opening Quiz Desk…</h3></div></main>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+/* ---------- this copy's group: each group is its own artifact with its own link and database ---------- */
+const GROUP = { name: '__GROUP__', limit: 30 };
+
+/* ---------- utilities ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const rid = () => Math.random().toString(36).slice(2, 10);
+const norm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const clone = o => JSON.parse(JSON.stringify(o));
+const LETTERS = ['A','B','C','D','E','F'];
+const fmtTime = ms => { const s = Math.max(0, Math.round(ms/1000)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60; return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(x).padStart(2,'0'); };
+const fmtDate = t => t ? new Date(t).toLocaleString([], {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : '—';
+const pct = (a, b) => b ? Math.round(a / b * 1000) / 10 : 0;
+function store(k, v){ try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch { return null; } }
+let toastT;
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 3200); }
+function hashStr(s){ let h = 2166136261; for (const c of s){ h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rng(seed){ return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function shuffled(arr, rand){ const a = arr.slice(); for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+/* ---------- in-tab fallback store (used only when the shared database is unavailable) ---------- */
+function memoryDB(){
+  const docs = new Map(), subs = new Set();
+  const notify = () => setTimeout(() => subs.forEach(f => f()));
+  const snap = p => { const d = docs.get(p); return { id: p.split('/').pop(), exists: !!d, data: () => d ? clone(d) : undefined, metadata: {} }; };
+  const docRef = p => ({ id: p.split('/').pop(), path: p,
+    get: async () => snap(p),
+    set: async d => { docs.set(p, clone(d)); notify(); },
+    update: async d => { if (!docs.has(p)) throw { code: 'invalid_argument' }; docs.set(p, { ...docs.get(p), ...clone(d) }); notify(); },
+    delete: async () => { docs.delete(p); notify(); },
+    onSnapshot(next){ const f = () => next(snap(p)); subs.add(f); setTimeout(f); return () => subs.delete(f); } });
+  const colRef = p => { const depth = p.split('/').length + 1;
+    const list = () => [...docs.keys()].filter(k => k.startsWith(p + '/') && k.split('/').length === depth).sort().map(snap);
+    return { path: p, doc: id => docRef(p + '/' + (id || rid())),
+      get: async () => { const d = list(); return { docs: d, size: d.length, empty: !d.length }; },
+      onSnapshot(next){ const f = () => { const d = list(); next({ docs: d, size: d.length, empty: !d.length, docChanges: () => [] }); }; subs.add(f); setTimeout(f); return () => subs.delete(f); } }; };
+  return { doc: docRef, collection: colRef };
+}
+
+/* ---------- state ---------- */
+const S = {
+  ready: false, local: false, db: null, downloads: null, uid: null,
+  isTeacher: false, view: 'teacher', tab: store('qd.tab') || 'students',
+  roster: [], bank: [], keys: {}, quizzes: [], subs: [], mySub: null,
+  index: [], full: {}, subsWatch: null, quizzesLoaded: false, indexLoaded: false,
+  pending: null,             // parsed upload awaiting confirmation {kind, rows, issues, mode}
+  bankFilter: { q: '', topic: '', diff: '' }, rosterFilter: '',
+  builder: { title: '', duration: 20, count: 10, topics: [], diff: '', divisions: [], shuffle: true, penalty: 1, free: 1, maxV: 5 },
+  preStart: null,
+  resultsQuiz: null, confirmDelete: null,
+  roll: store('qd.roll') || '', take: null, studentScreen: 'list', reviewQuiz: null,
+};
+let dirty = false;
+function soft(){ // re-render unless the person is typing in a field or sitting an exam
+  if (S.take) { if (S.take && checkClosed()) return; renderTabs(); return; }
+  const a = document.activeElement;
+  if (a && $('#view').contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) { dirty = true; return; }
+  render();
+}
+document.addEventListener('focusout', () => setTimeout(() => { if (dirty){ dirty = false; soft(); } }, 0));
+
+/* ---------- boot ---------- */
+async function boot(){
+  let db = null, user = null, dl = null;
+  if (window.claude?.use){
+    [db, user, dl] = await Promise.all([window.claude.use('db'), window.claude.use('user'), window.claude.use('downloads')]);
+  }
+  S.downloads = dl;
+  if (db){
+    S.db = db;
+    S.uid = user ? await user.id() : null;
+    S.isTeacher = user ? await user.canEdit() : false;
+  } else {
+    S.db = memoryDB(); S.local = true; S.uid = 'preview-' + rid(); S.isTeacher = true;
+  }
+  S.view = S.isTeacher ? (store('qd.view') || 'teacher') : 'student';
+  subscribe();
+  S.ready = true; render();
+}
+function onErr(e){ if (e?.code === 'revoked') toast('Access to this quiz desk changed. Reload to continue.'); }
+function subscribe(){
+  const db = S.db;
+  if (S.isTeacher){
+    db.collection('staff').onSnapshot(snap => {
+      S.keys = {};
+      for (const d of snap.docs){
+        const v = d.data() || {};
+        if (d.id === 'roster') S.roster = v.students || [];
+        else if (d.id === 'bank') S.bank = v.questions || [];
+        else if (d.id.startsWith('key_')) S.keys[d.id.slice(4)] = v;
+      }
+      soft();
+    }, onErr);
+    // Full quiz documents (questions, rolls) are watched by faculty only.
+    db.collection('quizzes').onSnapshot(snap => {
+      S.quizzes = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      S.quizzesLoaded = true; syncIndexIfStale(); soft();
+    }, onErr);
+  }
+  // Everyone watches ONE small summary document instead of every full quiz.
+  db.doc('pub/index').onSnapshot(d => {
+    S.index = (d.exists && d.data().quizzes) || [];
+    S.indexLoaded = true; if (S.isTeacher) syncIndexIfStale(); soft();
+  }, onErr);
+  if (S.uid) loadMySub().then(soft);
+}
+// A student is the only writer of their own record, so read it once instead of watching it.
+async function loadMySub(){
+  try { const d = await S.db.doc('subs/' + S.uid).get(); S.mySub = d.exists ? clone(d.data()) : null; S.mySubLoaded = true; if (S.mySub?.roll) S.roll = S.mySub.roll; return true; }
+  catch { return false; }
+}
+// Faculty watch every student's attempts only on the tabs that show them, and redraw at most every 2 s.
+let subsT;
+function watchSubs(on){
+  if (on && !S.subsWatch){
+    S.subsWatch = S.db.collection('subs').onSnapshot(snap => {
+      S.subs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (!subsT) subsT = setTimeout(() => { subsT = null; soft(); }, 2000);
+    }, onErr);
+  } else if (!on && S.subsWatch){ S.subsWatch(); S.subsWatch = null; }
+}
+const metaOf = q => ({ id: q.id, title: q.title, status: q.status, released: !!q.released, durationMin: q.durationMin, totalMarks: q.totalMarks, n: q.questions.length, allowedRolls: q.allowedRolls, proctor: q.proctor || null, createdAt: q.createdAt });
+const indexSig = list => JSON.stringify(list.map(m => [m.id, m.title, m.status, !!m.released, m.durationMin, m.totalMarks, m.n, m.allowedRolls, m.proctor ? [m.proctor.penalty, m.proctor.free, m.proctor.maxV] : null, m.createdAt]));
+let indexBusy = false;
+async function syncIndexIfStale(){
+  if (!S.isTeacher || !S.quizzesLoaded || !S.indexLoaded || indexBusy) return;
+  const want = S.quizzes.filter(q => q.status !== 'draft').map(metaOf);
+  if (indexSig(want) === indexSig(S.index)) return;
+  indexBusy = true;
+  try { await S.db.doc('pub/index').set({ quizzes: want, updatedAt: Date.now() }); } catch {}
+  indexBusy = false;
+}
+
+/* ---------- parsing uploads ---------- */
+function parseCSV(text){
+  const lines = text.replace(/\r\n?/g, '\n');
+  const first = lines.split('\n')[0] || '';
+  const delim = (first.split('\t').length > first.split(',').length) ? '\t' : ',';
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < lines.length; i++){
+    const c = lines[i];
+    if (q){ if (c === '"'){ if (lines[i+1] === '"'){ cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === delim){ row.push(cell); cell = ''; }
+    else if (c === '\n'){ row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += c;
+  }
+  if (cell || row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(x => String(x).trim()));
+}
+async function fileRows(file){
+  if (window.XLSX){
+    const wb = XLSX.read(await file.arrayBuffer());
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false }).filter(r => r.some(x => String(x).trim()));
+  }
+  if (/\.(csv|txt|tsv)$/i.test(file.name)) return parseCSV(await file.text());
+  throw new Error('The Excel reader did not load. Save the sheet as CSV and upload that instead.');
+}
+const findCol = (heads, aliases) => heads.findIndex(h => aliases.includes(h));
+const STUDENT_COLS = {
+  roll: ['roll','rollno','rollnumber','prn','prnno','prnnumber','enrollment','enrollmentno','enrolmentno','studentid','regno','registrationno','usn','id'],
+  name: ['name','studentname','fullname','student','nameofstudent'],
+  email: ['email','emailid','mail','emailaddress','mailid'],
+  division: ['division','div','batch','class','section','branch','group'],
+};
+function parseStudents(rows){
+  const heads = (rows[0] || []).map(norm), issues = [];
+  const ix = Object.fromEntries(Object.entries(STUDENT_COLS).map(([k, a]) => [k, findCol(heads, a)]));
+  if (ix.roll < 0) return { error: 'No roll number column found. Name the header "Roll No" or "PRN".' };
+  if (ix.name < 0) issues.push('No name column found; students will be listed by roll number only.');
+  const out = [], seen = new Set();
+  rows.slice(1).forEach((r, i) => {
+    const roll = String(r[ix.roll] ?? '').trim().toUpperCase();
+    if (!roll){ issues.push(`Row ${i + 2}: missing roll number, skipped.`); return; }
+    if (seen.has(roll)){ issues.push(`Row ${i + 2}: roll ${roll} repeats an earlier row, skipped.`); return; }
+    seen.add(roll);
+    out.push({ roll, name: ix.name >= 0 ? String(r[ix.name]).trim() : '', email: ix.email >= 0 ? String(r[ix.email]).trim() : '', division: ix.division >= 0 ? String(r[ix.division]).trim().toUpperCase() : '' });
+  });
+  return { rows: out, issues };
+}
+const Q_COLS = {
+  text: ['question','questiontext','q','text','stem','questions'],
+  answer: ['answer','correct','correctanswer','key','ans','correctoption','answerkey','rightanswer'],
+  topic: ['topic','unit','chapter','module','subject','co','courseoutcome'],
+  diff: ['difficulty','level','difficultylevel','diff'],
+  marks: ['marks','mark','points','score','weight','weightage'],
+};
+const OPT_COLS = LETTERS.slice(0, 6).map((L, i) => { const l = L.toLowerCase(), n = i + 1; return [l, 'option' + l, 'opt' + l, 'choice' + l, 'option' + n, 'opt' + n, 'choice' + n, 'o' + n]; });
+function normDiff(v){ const s = norm(v); if (!s) return 'medium'; if (/^(e|1|low)/.test(s)) return 'easy'; if (/^(h|3|high|diff)/.test(s)) return 'hard'; return 'medium'; }
+function parseQuestions(rows){
+  const heads = (rows[0] || []).map(norm), issues = [];
+  const ix = Object.fromEntries(Object.entries(Q_COLS).map(([k, a]) => [k, findCol(heads, a)]));
+  const optIx = OPT_COLS.map(a => findCol(heads, a)).filter(i => i >= 0);
+  if (ix.text < 0) return { error: 'No question column found. Name the header "Question".' };
+  if (optIx.length < 2) return { error: 'Need at least two option columns, named A, B, C, D (or Option A … Option D).' };
+  if (ix.answer < 0) return { error: 'No answer column found. Name the header "Answer" and put A–D (or the option text) in it.' };
+  const out = [];
+  rows.slice(1).forEach((r, i) => {
+    const text = String(r[ix.text] ?? '').trim();
+    if (!text){ issues.push(`Row ${i + 2}: empty question, skipped.`); return; }
+    const options = optIx.map(j => String(r[j] ?? '').trim()).filter(Boolean);
+    if (options.length < 2){ issues.push(`Row ${i + 2}: fewer than two options, skipped.`); return; }
+    const raw = String(r[ix.answer] ?? '').trim();
+    let answer = -1;
+    if (/^[a-f]$/i.test(raw)) answer = LETTERS.indexOf(raw.toUpperCase());
+    else if (/^(option\s*)?[a-f]$/i.test(raw)) answer = LETTERS.indexOf(raw.slice(-1).toUpperCase());
+    else if (/^\d$/.test(raw)) answer = +raw - 1;
+    else answer = options.findIndex(o => norm(o) === norm(raw));
+    if (answer < 0 || answer >= options.length){ issues.push(`Row ${i + 2}: answer "${raw || 'blank'}" doesn't match an option, skipped.`); return; }
+    const marks = ix.marks >= 0 ? parseFloat(r[ix.marks]) : NaN;
+    out.push({ id: 'q' + rid(), text, options, answer, topic: ix.topic >= 0 ? String(r[ix.topic]).trim() || 'General' : 'General', difficulty: ix.diff >= 0 ? normDiff(r[ix.diff]) : 'medium', marks: marks > 0 ? marks : 1 });
+  });
+  return { rows: out, issues };
+}
+async function handleUpload(kind, source){
+  try {
+    const rows = typeof source === 'string' ? parseCSV(source) : await fileRows(source);
+    if (rows.length < 2) throw new Error('The file has a header row but no data rows.');
+    const res = kind === 'students' ? parseStudents(rows) : parseQuestions(rows);
+    if (res.error) throw new Error(res.error);
+    S.pending = { kind, rows: res.rows, issues: res.issues, mode: 'merge', name: typeof source === 'string' ? 'Pasted text' : source.name };
+  } catch (e){ S.pending = { kind, error: e.message || String(e) }; }
+  render();
+}
+
+/* ---------- writes ---------- */
+async function write(fn, okMsg){
+  try { await fn(); if (okMsg) toast(okMsg); }
+  catch (e){
+    const m = { quota_exceeded: 'Storage is full. Delete old quizzes or questions and try again.', invalid_argument: 'You don\'t have permission to change this, or the data is too large.', resource_exhausted: 'Too many changes at once. Wait a moment and try again.' }[e?.code];
+    toast(m || 'Couldn\'t save. Check your connection and try again.');
+    throw e;
+  }
+}
+async function savePending(){
+  const p = S.pending; if (!p?.rows) return;
+  if (p.kind === 'students'){
+    let list = p.mode === 'replace' ? [] : S.roster.slice();
+    const map = new Map(list.map(s => [s.roll, s]));
+    p.rows.forEach(s => map.set(s.roll, s));
+    list = [...map.values()].sort((a, b) => a.roll.localeCompare(b.roll, undefined, { numeric: true }));
+    await write(() => S.db.doc('staff/roster').set({ students: list, updatedAt: Date.now() }), `Saved ${list.length} students.`);
+  } else {
+    let list = p.mode === 'replace' ? [] : S.bank.slice();
+    const seen = new Set(list.map(q => norm(q.text)));
+    let added = 0;
+    p.rows.forEach(q => { if (!seen.has(norm(q.text))){ list.push(q); seen.add(norm(q.text)); added++; } });
+    if (JSON.stringify(list).length > 240000){ toast('That bank is too large for one save (about 700 questions). Split it and upload in parts.'); return; }
+    await write(() => S.db.doc('staff/bank').set({ questions: list, updatedAt: Date.now() }), `Added ${added} questions. Bank now has ${list.length}.`);
+  }
+  S.pending = null; render();
+}
+async function removeStudent(roll){ const list = S.roster.filter(s => s.roll !== roll); await write(() => S.db.doc('staff/roster').set({ students: list, updatedAt: Date.now() }), `Removed ${roll}.`); }
+async function removeQuestion(id){ const list = S.bank.filter(q => q.id !== id); await write(() => S.db.doc('staff/bank').set({ questions: list, updatedAt: Date.now() }), 'Question removed.'); }
+
+/* ---------- sample data ---------- */
+// Sample class: one full group, split into two divisions.
+const SAMPLE_STUDENTS = (() => {
+  const first = ['Aarav','Isha','Rohan','Sneha','Kabir','Ananya','Vedant','Mrunal','Omkar','Tanvi','Arjun','Pooja','Siddhi','Yash','Gauri','Atharva','Riya','Pranav','Sakshi','Tejas'];
+  const last = ['Kulkarni','Deshmukh','Patil','Joshi','Shaikh','Pawar','Jadhav','Gokhale','Shinde','Bhosale','Nair','Wagh','More','Chavan','Kale','Apte'];
+  const rows = ['Roll No,Name,Email,Division'];
+  for (let i = 0; i < GROUP.limit; i++){
+    const div = i < GROUP.limit / 2 ? 'A' : 'B', n = String(i % (GROUP.limit / 2) + 1).padStart(2, '0');
+    const f = first[i % first.length], l = last[(i * 7) % last.length];
+    rows.push(`AIML-${div}-${n},${f} ${l},${f.toLowerCase()}.${l.toLowerCase()}${n}@example.edu,${div}`);
+  }
+  return rows.join('\n');
+})();
+const SAMPLE_QUESTIONS = `Question,A,B,C,D,Answer,Topic,Difficulty,Marks
+Which activation function outputs values strictly between 0 and 1?,ReLU,Sigmoid,Tanh,Leaky ReLU,B,Deep Learning,Easy,1
+What does a high variance model typically suffer from?,Underfitting,Overfitting,Vanishing gradients,Class imbalance,B,Machine Learning,Easy,1
+Which loss is standard for multi-class classification with softmax outputs?,Mean squared error,Hinge loss,Categorical cross-entropy,Huber loss,C,Deep Learning,Medium,1
+In k-fold cross-validation with k = 5 what fraction of data is used for validation in each fold?,10%,20%,25%,50%,B,Machine Learning,Easy,1
+Which technique randomly zeroes activations during training to reduce overfitting?,Batch normalization,Dropout,Weight decay,Early stopping,B,Deep Learning,Easy,1
+What problem do LSTM gates mainly address in RNNs?,Exploding memory use,Vanishing gradients over long sequences,Slow tokenization,Overfitting on short text,B,Deep Learning,Medium,2
+Which metric is most informative for a heavily imbalanced binary classifier?,Accuracy,F1 score,Mean absolute error,R squared,B,Machine Learning,Medium,1
+In the Transformer the scaled dot-product attention divides scores by,The number of heads,The sequence length,The square root of the key dimension,The batch size,C,NLP,Medium,2
+What does TF-IDF down-weight?,Rare words,Words frequent across many documents,Stop-word-free text,Numeric tokens,B,NLP,Easy,1
+Which algorithm is unsupervised?,Logistic regression,Random forest,K-means,Support vector machine,C,Machine Learning,Easy,1
+A convolution layer with 3x3 kernels and padding 1 on a 32x32 input with stride 1 outputs,30x30,32x32,34x34,16x16,B,Deep Learning,Medium,1
+Which optimizer keeps running averages of both the gradient and its square?,SGD,Momentum,Adam,Adagrad,C,Deep Learning,Medium,1
+Word2Vec skip-gram learns embeddings by predicting,The next sentence,Context words from a target word,Part-of-speech tags,Document labels,B,NLP,Medium,1
+Increasing the regularization strength lambda in ridge regression generally,Increases variance,Decreases bias,Shrinks coefficients toward zero,Removes features exactly,C,Machine Learning,Medium,1
+In a GAN the discriminator is trained to,Generate realistic samples,Distinguish real from generated samples,Minimize reconstruction loss,Cluster latent codes,B,Generative AI,Easy,1
+What does the temperature parameter do when sampling from a language model?,Changes model size,Scales logits to control randomness,Sets the context length,Freezes embeddings,B,Generative AI,Medium,1
+Which statement about the ROC AUC is true?,It depends on one fixed threshold,0.5 means a random classifier,It cannot exceed 0.9,It measures regression error,B,Machine Learning,Hard,2
+Residual connections in deep networks mainly help by,Reducing parameters,Allowing gradients to flow through identity paths,Replacing activation functions,Removing the need for normalization,B,Deep Learning,Hard,2`;
+async function loadSample(kind){ await handleUpload(kind, kind === 'students' ? SAMPLE_STUDENTS : SAMPLE_QUESTIONS); }
+
+/* ---------- proctoring rules ---------- */
+const PROCTOR_DEFAULT = { penalty: 1, free: 1, maxV: 5 };
+const VIOL_LABEL = { tab: 'Left the quiz tab or window', copy: 'Tried to copy text', cut: 'Tried to cut text', paste: 'Tried to paste text', menu: 'Opened the right-click menu', drop: 'Dragged in content from elsewhere', fullscreen: 'Left full screen', screenshot: 'Pressed Print Screen' };
+function proctorOf(quiz){ return { ...PROCTOR_DEFAULT, ...(quiz.proctor || {}) }; }
+function penaltyOf(quiz, a){
+  const p = proctorOf(quiz), v = (a?.violations || []).length;
+  return { v, ded: Math.max(0, v - p.free) * p.penalty, p };
+}
+function rulesText(quiz){
+  const p = proctorOf(quiz);
+  return `Switching tabs or windows, copying, pasting, right-clicking, or bringing in content from other websites is recorded as a violation. ${p.free ? `The first ${p.free === 1 ? 'one is a warning' : p.free + ' are warnings'}; after that, ` : 'Each one '}${p.penalty ? `costs ${p.penalty} mark${p.penalty == 1 ? '' : 's'} each` : 'is reported to your teacher'}.${p.maxV ? ` After ${p.maxV} violations the quiz is submitted automatically.` : ''}`;
+}
+
+/* ---------- quizzes ---------- */
+function topicsOf(bank){ return [...new Set(bank.map(q => q.topic || 'General'))].sort(); }
+function divisionsOf(roster){ return [...new Set(roster.map(s => s.division).filter(Boolean))].sort(); }
+function builderPool(){
+  const b = S.builder;
+  return S.bank.filter(q => (!b.topics.length || b.topics.includes(q.topic)) && (!b.diff || q.difficulty === b.diff));
+}
+async function createQuiz(){
+  const b = S.builder, pool = builderPool();
+  if (!b.title.trim()) return toast('Give the quiz a title.');
+  if (!pool.length) return toast('No questions match these filters.');
+  const n = Math.min(Math.max(1, +b.count || pool.length), pool.length);
+  const picked = shuffled(pool, Math.random).slice(0, n);
+  const assigned = S.roster.filter(s => !b.divisions.length || b.divisions.includes(s.division));
+  if (!assigned.length) return toast('Upload the student list first, or pick a division that has students.');
+  const id = 'z' + Date.now().toString(36) + rid().slice(0, 4);
+  const quiz = {
+    title: b.title.trim(), durationMin: Math.max(1, +b.duration || 20), status: 'draft', released: false, shuffle: !!b.shuffle,
+    questions: picked.map(q => ({ id: q.id, text: q.text, options: q.options, marks: q.marks, topic: q.topic })),
+    totalMarks: picked.reduce((a, q) => a + (+q.marks || 1), 0),
+    allowedRolls: assigned.map(s => s.roll), divisions: b.divisions.slice(), createdAt: Date.now(),
+    proctor: { penalty: Math.max(0, +b.penalty || 0), free: Math.max(0, Math.floor(+b.free || 0)), maxV: Math.max(0, Math.floor(+b.maxV || 0)) },
+  };
+  const key = { quizId: id, answers: Object.fromEntries(picked.map(q => [q.id, q.answer])) };
+  await write(async () => { await S.db.doc('staff/key_' + id).set(key); await S.db.doc('quizzes/' + id).set(quiz); }, `Created "${quiz.title}" as a draft. Set it live when students are ready.`);
+  S.builder.title = ''; render();
+}
+async function setQuiz(id, patch, msg){
+  const q = S.quizzes.find(x => x.id === id); if (!q) return;
+  const next = { ...clone(q), ...patch }; delete next.id;
+  if (!next.released) delete next.key;
+  await write(() => S.db.doc('quizzes/' + id).set(next), msg);
+}
+async function releaseResults(id, on){
+  const key = S.keys[id]?.answers; if (on && !key) return toast('Answer key for this quiz is missing.');
+  await setQuiz(id, on ? { released: true, key } : { released: false }, on ? 'Results released. Students can now see scores and correct answers.' : 'Results hidden from students.');
+}
+async function deleteQuiz(id){
+  await write(async () => { await S.db.doc('quizzes/' + id).delete(); await S.db.doc('staff/key_' + id).delete(); }, 'Quiz deleted. Student attempts stay in the records.');
+  S.confirmDelete = null; if (S.resultsQuiz === id) S.resultsQuiz = null; render();
+}
+
+/* ---------- results ---------- */
+function results(quiz){
+  const key = S.keys[quiz.id]?.answers || quiz.key || {};
+  const rosterMap = new Map(S.roster.map(s => [s.roll, s]));
+  const rows = [];
+  for (const sub of S.subs){
+    const a = sub.attempts?.[quiz.id]; if (!a) continue;
+    let score = 0, correct = 0, attempted = 0;
+    for (const q of quiz.questions){
+      const v = a.answers?.[q.id];
+      if (v !== undefined && v !== null){ attempted++; if (v === key[q.id]){ score += +q.marks || 1; correct++; } }
+    }
+    const pen = penaltyOf(quiz, a), raw = score;
+    score = Math.max(0, raw - pen.ded);
+    rows.push({ uid: sub.id, roll: a.roll, name: rosterMap.get(a.roll)?.name || '', division: rosterMap.get(a.roll)?.division || '', score, raw, viol: pen.v, ded: pen.ded, violations: a.violations || [], correct, attempted,
+      pct: pct(score, quiz.totalMarks), submitted: !!a.submittedAt, auto: !!a.auto, startedAt: a.startedAt, submittedAt: a.submittedAt,
+      taken: a.submittedAt ? a.submittedAt - a.startedAt : null, answers: a.answers || {}, onList: quiz.allowedRolls.includes(a.roll) });
+  }
+  const counts = {}; rows.forEach(r => counts[r.roll] = (counts[r.roll] || 0) + 1);
+  rows.forEach(r => r.dup = counts[r.roll] > 1);
+  rows.sort((a, b) => b.score - a.score || (a.taken ?? 9e15) - (b.taken ?? 9e15));
+  const seen = new Set(rows.map(r => r.roll));
+  const missing = quiz.allowedRolls.filter(r => !seen.has(r));
+  const perQ = quiz.questions.map(q => { const done = rows.filter(r => r.submitted); const c = done.filter(r => r.answers[q.id] === key[q.id]).length; return { q, rate: done.length ? c / done.length : 0, n: done.length }; });
+  return { rows, missing, perQ, key };
+}
+async function exportCSV(quiz){
+  const { rows, missing } = results(quiz);
+  const cell = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+  const lines = [['Rank','Roll No','Name','Division','Final score','Out of','Percent','Marks before penalty','Violations','Marks deducted','Violation details','Correct','Attempted','Status','Time taken','Submitted at'].join(',')];
+  const vdet = r => r.violations.map(v => `${VIOL_LABEL[v.t] || v.t} at ${new Date(v.at).toLocaleTimeString()}${v.secs ? ` (${v.secs}s away)` : ''}`).join('; ');
+  rows.forEach((r, i) => lines.push([i + 1, r.roll, r.name, r.division, r.score, quiz.totalMarks, r.pct, r.raw, r.viol, r.ded, vdet(r), r.correct, r.attempted, r.submitted ? (r.auto ? 'Auto-submitted' : 'Submitted') : 'In progress', r.taken ? fmtTime(r.taken) : '', r.submittedAt ? new Date(r.submittedAt).toISOString() : ''].map(cell).join(',')));
+  const rm = new Map(S.roster.map(s => [s.roll, s]));
+  missing.forEach(roll => lines.push(['', roll, rm.get(roll)?.name || '', rm.get(roll)?.division || '', 0, quiz.totalMarks, 0, 0, 0, 0, '', 0, 0, 'Absent', '', ''].map(cell).join(',')));
+  const csv = lines.join('\n'), filename = GROUP.name.replace(/\s+/g, '-') + '-' + quiz.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') + '-results.csv';
+  if (S.downloads){
+    try { await S.downloads.save({ filename, data: csv }); toast('Results saved as CSV.'); return; }
+    catch (e){ if (e?.code === 'declined') return; }
+  }
+  try { await navigator.clipboard.writeText(csv); toast('Copied results as CSV. Paste into Excel or Sheets.'); }
+  catch { toast('Couldn\'t export from this view.'); }
+}
+
+/* ---------- rendering: shared ---------- */
+function render(){
+  renderTabs();
+  const v = $('#view');
+  if (!S.ready) return;
+  watchSubs(S.isTeacher && S.view === 'teacher' && (S.tab === 'quizzes' || S.tab === 'results'));
+  if (S.view === 'teacher') v.innerHTML = notices() + teacherView();
+  else v.innerHTML = notices() + studentView();
+  bind();
+}
+function notices(){
+  let h = '';
+  if (S.local) h += `<div class="notice">Preview mode: the shared database isn't available here, so uploads and attempts live only in this tab and clear on reload.</div>`;
+  return h;
+}
+function renderTabs(){
+  const tabs = $('#tabs'), end = $('#barEnd');
+  $('#groupChip').textContent = GROUP.name;
+  if (!S.ready){ tabs.innerHTML = ''; end.innerHTML = ''; return; }
+  if (S.view === 'teacher'){
+    const live = S.quizzes.filter(q => q.status === 'live').length;
+    const t = [['students', 'Students', S.roster.length], ['bank', 'Question bank', S.bank.length], ['quizzes', 'Quizzes', S.quizzes.length], ['results', 'Results', null]];
+    tabs.innerHTML = t.map(([k, l, c]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${l}${c !== null ? `<span class="count">${c}</span>` : ''}</button>`).join('');
+    end.innerHTML = `${live ? `<span class="pill live">${live} live</span>` : ''}<span class="role">Faculty</span><button class="btn sm" data-act="as-student">Student view</button>`;
+  } else {
+    tabs.innerHTML = '';
+    end.innerHTML = `${S.roll ? `<span class="mono small">${esc(S.roll)}</span>` : ''}<span class="role">Student</span>${S.isTeacher && !S.take ? '<button class="btn sm" data-act="as-teacher">Faculty view</button>' : ''}`;
+  }
+}
+
+/* ---------- teacher ---------- */
+function teacherView(){
+  if (S.tab === 'bank') return bankView();
+  if (S.tab === 'quizzes') return quizzesView();
+  if (S.tab === 'results') return resultsView();
+  return studentsView();
+}
+function uploader(kind){
+  const isS = kind === 'students';
+  const cols = isS ? [['Roll No', 0], ['Name', 0], ['Email', 1], ['Division', 1]] : [['Question', 0], ['A', 0], ['B', 0], ['C', 1], ['D', 1], ['Answer', 0], ['Topic', 1], ['Difficulty', 1], ['Marks', 1]];
+  const p = S.pending?.kind === kind ? S.pending : null;
+  let body = '';
+  if (p?.error) body = `<div class="issues" role="alert">${esc(p.error)}</div><div class="row"><button class="btn sm" data-act="cancel-pending">Dismiss</button></div>`;
+  else if (p) {
+    const n = p.rows.length;
+    const prev = isS
+      ? `<table><thead><tr><th>Roll No</th><th>Name</th><th>Div</th><th>Email</th></tr></thead><tbody>${p.rows.slice(0, 6).map(s => `<tr><td class="mono">${esc(s.roll)}</td><td>${esc(s.name)}</td><td>${esc(s.division)}</td><td class="muted">${esc(s.email)}</td></tr>`).join('')}</tbody></table>`
+      : `<table><thead><tr><th>Question</th><th>Answer</th><th>Topic</th><th class="num">Marks</th></tr></thead><tbody>${p.rows.slice(0, 5).map(q => `<tr><td class="wrap">${esc(q.text)}</td><td><span class="bub sm fill ok">${LETTERS[q.answer]}</span></td><td>${esc(q.topic)}</td><td class="num">${q.marks}</td></tr>`).join('')}</tbody></table>`;
+    const existing = isS ? S.roster.length : S.bank.length;
+    if (isS){
+      const after = p.mode === 'replace' ? n : new Set([...S.roster.map(s => s.roll), ...p.rows.map(s => s.roll)]).size;
+      if (after > GROUP.limit && !p.issues.some(i => i.startsWith('Group limit'))) p.issues.unshift(`Group limit: ${GROUP.name} is sized for ${GROUP.limit} students and this makes ${after}. Put the extra students in another group's link so each group stays fast.`);
+    }
+    body = `<div class="panel-head"><div><div class="label">Ready to save · ${esc(p.name)}</div><h3>${n} ${isS ? 'student' : 'question'}${n === 1 ? '' : 's'} read</h3></div></div>
+      ${p.issues.length ? `<div class="issues">${p.issues.slice(0, 40).map(i => `<div>${esc(i)}</div>`).join('')}${p.issues.length > 40 ? `<div>…and ${p.issues.length - 40} more</div>` : ''}</div>` : `<div class="issues ok">Every row read cleanly.</div>`}
+      <div class="tbl-wrap">${prev}</div>
+      ${n > (isS ? 6 : 5) ? `<p class="small muted">Showing the first ${isS ? 6 : 5} of ${n}.</p>` : ''}
+      ${existing ? `<div class="row" role="radiogroup">
+        <label class="check"><input type="radio" name="mode-${kind}" id="mode-${kind}-merge" value="merge" ${p.mode === 'merge' ? 'checked' : ''}> ${isS ? 'Merge with the current list (same roll number updates the student)' : 'Add to the current bank (exact duplicates skipped)'}</label>
+        <label class="check"><input type="radio" name="mode-${kind}" id="mode-${kind}-replace" value="replace" ${p.mode === 'replace' ? 'checked' : ''}> Replace all ${existing} ${isS ? 'students' : 'questions'}</label></div>` : ''}
+      <div class="row"><button class="btn primary" data-act="save-pending" ${n ? '' : 'disabled'}>Save ${n} ${isS ? 'students' : 'questions'}</button><button class="btn ghost" data-act="cancel-pending">Cancel</button></div>`;
+  } else {
+    body = `<label class="drop" data-drop="${kind}" for="file-${kind}">
+        <strong>Drop ${isS ? 'the student list' : 'a question bank'} here</strong>
+        <span class="small muted">Excel (.xlsx, .xls) or CSV, first row as headers</span>
+        <span class="cols">${cols.map(([c, o]) => `<span class="chip ${o ? 'opt' : ''}">${c}</span>`).join('')}</span>
+        <span class="small muted">Dashed columns are optional.${isS ? '' : ' Answer can be A–D, 1–4, or the option text.'}</span>
+      </label>
+      <input type="file" id="file-${kind}" accept=".csv,.xlsx,.xls,.tsv,.txt" hidden>
+      <details><summary class="small" style="cursor:pointer">Or paste rows from a spreadsheet</summary>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+          <textarea id="paste-${kind}" placeholder="${isS ? 'Roll No,Name,Email,Division' : 'Question,A,B,C,D,Answer,Topic,Difficulty,Marks'}"></textarea>
+          <div class="row"><button class="btn sm" data-act="read-paste" data-kind="${kind}">Read pasted rows</button></div>
+        </div></details>
+      ${(isS ? !S.roster.length : !S.bank.length) ? `<div class="row"><button class="btn sm ghost" data-act="sample" data-kind="${kind}">Try with sample ${isS ? 'students' : 'AI & ML questions'}</button></div>` : ''}`;
+  }
+  return `<section class="panel"><div><div class="label">Upload</div><h2>${isS ? 'Student list' : 'Question bank'}</h2></div>${body}</section>`;
+}
+function studentsView(){
+  const f = norm(S.rosterFilter);
+  const list = S.roster.filter(s => !f || norm(s.roll + s.name + s.email + s.division).includes(f));
+  const divs = divisionsOf(S.roster);
+  const takenCount = new Map();
+  S.subs.forEach(x => Object.values(x.attempts || {}).forEach(a => { if (a.submittedAt) takenCount.set(a.roll, (takenCount.get(a.roll) || 0) + 1); }));
+  const table = S.roster.length ? `
+    <div class="row"><input type="search" id="roster-q" placeholder="Search roll, name, division" value="${esc(S.rosterFilter)}" style="max-width:280px">
+      <span class="small muted">${divs.map(d => `Div ${esc(d)}: <b class="mono">${S.roster.filter(s => s.division === d).length}</b>`).join(' · ')}</span></div>
+    <div class="tbl-wrap scroll"><table><thead><tr><th>Roll No</th><th>Name</th><th>Div</th><th>Email</th><th class="num">Quizzes taken</th><th></th></tr></thead><tbody>
+      ${list.map(s => { const taken = takenCount.get(s.roll) || 0;
+        return `<tr><td class="mono">${esc(s.roll)}</td><td>${esc(s.name) || '<span class="muted">—</span>'}</td><td>${esc(s.division)}</td><td class="muted">${esc(s.email)}</td><td class="num">${taken}</td><td><button class="btn sm ghost" data-act="rm-student" data-id="${esc(s.roll)}" aria-label="Remove ${esc(s.roll)}">Remove</button></td></tr>`; }).join('')}
+      ${!list.length ? `<tr><td colspan="6" class="muted">No students match "${esc(S.rosterFilter)}".</td></tr>` : ''}
+    </tbody></table></div>`
+    : `<div class="empty"><h3>No students yet</h3><p>Upload the class list on the left. Students sign in to a quiz with the roll number from this list.</p></div>`;
+  return `<div class="grid2">${uploader('students')}
+    <section class="panel"><div class="panel-head"><div><div class="label">Class list</div><h2>${S.roster.length} student${S.roster.length === 1 ? '' : 's'}</h2></div></div>${table}</section></div>`;
+}
+function bankView(){
+  const f = S.bankFilter, topics = topicsOf(S.bank), qn = norm(f.q);
+  const list = S.bank.filter(q => (!f.topic || q.topic === f.topic) && (!f.diff || q.difficulty === f.diff) && (!qn || norm(q.text + q.options.join('')).includes(qn)));
+  const marks = S.bank.reduce((a, q) => a + (+q.marks || 1), 0);
+  const content = S.bank.length ? `
+    <div class="fields">
+      <label class="field"><span>Search</span><input type="search" id="bank-q" value="${esc(f.q)}" placeholder="Words in question or options"></label>
+      <label class="field"><span>Topic</span><select id="bank-topic"><option value="">All topics</option>${topics.map(t => `<option ${f.topic === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+      <label class="field"><span>Difficulty</span><select id="bank-diff"><option value="">Any</option>${['easy', 'medium', 'hard'].map(d => `<option value="${d}" ${f.diff === d ? 'selected' : ''}>${d[0].toUpperCase() + d.slice(1)}</option>`).join('')}</select></label>
+    </div>
+    <p class="small muted">${list.length} shown · ${topics.map(t => `${esc(t)} <b class="mono">${S.bank.filter(q => q.topic === t).length}</b>`).join(' · ')}</p>
+    <div class="qlist scroll">${list.map((q, i) => `<article class="qcard">
+      <div class="qcard-top"><p><b class="mono muted">${i + 1}.</b> ${esc(q.text)}</p><button class="btn sm ghost" data-act="rm-q" data-id="${q.id}" aria-label="Delete question">Delete</button></div>
+      <div class="opts">${q.options.map((o, j) => `<div class="${j === q.answer ? 'right' : ''}"><span class="bub sm ${j === q.answer ? 'fill ok' : ''}">${LETTERS[j]}</span><span>${esc(o)}</span></div>`).join('')}</div>
+      <div class="qmeta"><span>${esc(q.topic)}</span><span class="diff-${q.difficulty}">${q.difficulty}</span><span>${q.marks} mark${q.marks == 1 ? '' : 's'}</span></div></article>`).join('')}
+      ${!list.length ? '<p class="muted">No questions match these filters.</p>' : ''}</div>`
+    : `<div class="empty"><h3>The bank is empty</h3><p>Upload multiple-choice questions with their answer key. The answer key is visible only to faculty.</p></div>`;
+  return `<div class="grid2">${uploader('bank')}
+    <section class="panel"><div class="panel-head"><div><div class="label">Bank · answer key hidden from students</div><h2>${S.bank.length} question${S.bank.length === 1 ? '' : 's'}</h2></div>${S.bank.length ? `<span class="small muted">${topics.length} topics · ${marks} marks total</span>` : ''}</div>${content}</section></div>`;
+}
+function quizzesView(){
+  const b = S.builder, topics = topicsOf(S.bank), divs = divisionsOf(S.roster), pool = builderPool();
+  const assigned = S.roster.filter(s => !b.divisions.length || b.divisions.includes(s.division)).length;
+  const n = Math.min(+b.count || 0, pool.length);
+  const builder = `<section class="panel"><div><div class="label">New quiz</div><h2>Draw from the bank</h2></div>
+    ${!S.bank.length || !S.roster.length ? `<div class="issues">${!S.roster.length ? 'Upload the student list' : ''}${!S.roster.length && !S.bank.length ? ' and ' : ''}${!S.bank.length ? (S.roster.length ? 'Upload a question bank' : 'a question bank') : ''} before creating a quiz.</div>` : ''}
+    <label class="field"><span>Title</span><input type="text" id="b-title" value="${esc(b.title)}" placeholder="e.g. Unit 2 test · Deep Learning"></label>
+    <div class="fields">
+      <label class="field"><span>Questions</span><input type="number" id="b-count" min="1" value="${b.count}"></label>
+      <label class="field"><span>Minutes</span><input type="number" id="b-duration" min="1" value="${b.duration}"></label>
+      <label class="field"><span>Difficulty</span><select id="b-diff"><option value="">Any</option>${['easy', 'medium', 'hard'].map(d => `<option value="${d}" ${b.diff === d ? 'selected' : ''}>${d[0].toUpperCase() + d.slice(1)}</option>`).join('')}</select></label>
+    </div>
+    ${topics.length ? `<div class="field"><span>Topics <span class="muted">(none ticked = all)</span></span><div class="row">${topics.map((t, i) => `<label class="check"><input type="checkbox" id="b-topic-${i}" data-topic="${esc(t)}" ${b.topics.includes(t) ? 'checked' : ''}> ${esc(t)}</label>`).join('')}</div></div>` : ''}
+    ${divs.length ? `<div class="field"><span>Assign to divisions <span class="muted">(none ticked = whole list)</span></span><div class="row">${divs.map((d, i) => `<label class="check"><input type="checkbox" id="b-div-${i}" data-div="${esc(d)}" ${b.divisions.includes(d) ? 'checked' : ''}> Div ${esc(d)}</label>`).join('')}</div></div>` : ''}
+    <label class="check"><input type="checkbox" id="b-shuffle" ${b.shuffle ? 'checked' : ''}> Shuffle question and option order for each student</label>
+    <div class="field"><span>Proctoring <span class="muted">(tab switch, copy, paste, right-click, content from other sites)</span></span>
+      <div class="fields">
+        <label class="field"><span>Marks cut per violation</span><input type="number" id="b-penalty" min="0" step="0.5" value="${b.penalty}"></label>
+        <label class="field"><span>Free warnings</span><input type="number" id="b-free" min="0" value="${b.free}"></label>
+        <label class="field"><span>Auto-submit after <span class="muted">(0 = never)</span></span><input type="number" id="b-maxv" min="0" value="${b.maxV}"></label>
+      </div></div>
+    <p class="small muted">${pool.length} questions match · draws <b class="mono">${n}</b> at random${+b.count > pool.length ? ` (only ${pool.length} available)` : ''} · assigned to <b class="mono">${assigned}</b> students</p>
+    <div class="row"><button class="btn primary" data-act="create-quiz" ${pool.length && assigned ? '' : 'disabled'}>Create quiz</button></div></section>`;
+  const cards = S.quizzes.length ? `<div class="quizzes">${S.quizzes.map(q => {
+      const r = results(q), sub = r.rows.filter(x => x.submitted).length, now = r.rows.length - sub;
+      const cd = S.confirmDelete === q.id;
+      return `<article class="qz"><div class="row" style="justify-content:space-between"><span class="pill ${q.status}">${q.status === 'live' ? 'Live' : q.status === 'closed' ? 'Closed' : 'Draft'}</span>${q.released ? '<span class="pill info">Results out</span>' : ''}</div>
+        <h3>${esc(q.title)}</h3>
+        <div class="qz-facts"><span><b>${q.questions.length}</b> Qs</span><span><b>${q.totalMarks}</b> marks</span><span><b>${q.durationMin}</b> min</span><span><b>${sub}/${q.allowedRolls.length}</b> submitted</span>${q.status === 'live' ? `<span><b>${now}</b> answering now</span>` : ''}</div>
+        <p class="small muted">${q.divisions?.length ? 'Div ' + q.divisions.map(esc).join(', ') : 'Whole class'} · created ${fmtDate(q.createdAt)}</p>
+        <p class="small muted">Proctored: −${proctorOf(q).penalty} per violation after ${proctorOf(q).free} warning${proctorOf(q).free == 1 ? '' : 's'}${proctorOf(q).maxV ? `, auto-submit at ${proctorOf(q).maxV}` : ''}${r.rows.some(x => x.viol) ? ` · <b style="color:var(--bad)">${r.rows.filter(x => x.viol).length} flagged</b>` : ''}</p>
+        <div class="qz-actions">
+          ${q.status !== 'live' ? `<button class="btn sm primary" data-act="q-live" data-id="${q.id}">${q.status === 'closed' ? 'Reopen' : 'Go live'}</button>` : `<button class="btn sm" data-act="q-close" data-id="${q.id}">Close</button>`}
+          <button class="btn sm" data-act="q-results" data-id="${q.id}">Results</button>
+          <button class="btn sm" data-act="q-release" data-id="${q.id}">${q.released ? 'Hide results' : 'Release results'}</button>
+          ${cd ? `<button class="btn sm danger" data-act="q-delete" data-id="${q.id}">Confirm delete</button><button class="btn sm ghost" data-act="q-delete-cancel">Keep</button>` : `<button class="btn sm ghost" data-act="q-delete-ask" data-id="${q.id}">Delete</button>`}
+        </div></article>`; }).join('')}</div>`
+    : `<div class="empty"><h3>No quizzes yet</h3><p>Create one from the bank. It starts as a draft; students see it only when you set it live.</p></div>`;
+  return `<div class="grid2">${builder}<section class="panel"><div><div class="label">All quizzes</div><h2>${S.quizzes.length} quiz${S.quizzes.length === 1 ? '' : 'zes'}</h2></div>${cards}</section></div>`;
+}
+function resultsView(){
+  if (!S.quizzes.length) return `<section class="panel"><div class="empty"><h3>No results yet</h3><p>Results appear here as students submit quizzes.</p></div></section>`;
+  const quiz = S.quizzes.find(q => q.id === S.resultsQuiz) || S.quizzes[0];
+  S.resultsQuiz = quiz.id;
+  const { rows, missing, perQ } = results(quiz);
+  const done = rows.filter(r => r.submitted);
+  const avg = done.length ? done.reduce((a, r) => a + r.pct, 0) / done.length : 0;
+  const hi = done.length ? Math.max(...done.map(r => r.score)) : 0;
+  const pass = done.filter(r => r.pct >= 40).length;
+  const rm = new Map(S.roster.map(s => [s.roll, s]));
+  return `<section class="panel"><div class="panel-head"><div><div class="label">Results</div><h2>${esc(quiz.title)}</h2></div>
+      <div class="row"><select id="r-quiz" aria-label="Choose quiz" style="width:auto;max-width:100%">${S.quizzes.map(q => `<option value="${q.id}" ${q.id === quiz.id ? 'selected' : ''}>${esc(q.title)}</option>`).join('')}</select>
+      <button class="btn" data-act="export" ${rows.length || missing.length ? '' : 'disabled'}>Export CSV</button></div></div>
+    <div class="stats">
+      <div class="stat"><span class="label">Submitted</span><b>${done.length}<span class="muted" style="font-size:1rem"> / ${quiz.allowedRolls.length}</span></b></div>
+      <div class="stat"><span class="label">Answering now</span><b>${rows.length - done.length}</b></div>
+      <div class="stat"><span class="label">Average</span><b>${done.length ? avg.toFixed(1) + '%' : '—'}</b></div>
+      <div class="stat"><span class="label">Highest</span><b>${done.length ? hi + '<span class="muted" style="font-size:1rem"> / ' + quiz.totalMarks + '</span>' : '—'}</b></div>
+      <div class="stat"><span class="label">Scored 40%+</span><b>${done.length ? pass : '—'}</b></div>
+      <div class="stat"><span class="label">With violations</span><b style="${rows.some(r => r.viol) ? 'color:var(--bad)' : ''}">${rows.filter(r => r.viol).length}</b></div>
+    </div>
+    ${rows.some(r => r.dup || !r.onList) ? `<div class="issues">Check flagged rows: the same roll number was used from more than one account, or by someone not on this quiz's list.</div>` : ''}
+    <p class="small muted">Live view. Students' answers sync about every 15–20 seconds and immediately on submit, so in-progress scores can trail slightly.</p>
+    <div class="tbl-wrap scroll"><table><thead><tr><th class="num">#</th><th>Roll No</th><th>Name</th><th class="num">Score</th><th class="num">%</th><th class="num">Correct</th><th>Violations</th><th>Status</th><th class="num">Time</th><th>Submitted</th></tr></thead><tbody>
+      ${rows.map((r, i) => `<tr><td class="num">${i + 1}</td><td class="mono">${esc(r.roll)} ${r.dup ? '<span class="pill bad">Repeat</span>' : ''}${!r.onList ? '<span class="pill bad">Not on list</span>' : ''}</td><td>${esc(r.name)}</td><td class="num">${r.score}/${quiz.totalMarks}${r.ded ? ` <span class="small" style="color:var(--bad)">(−${r.ded})</span>` : ''}</td><td class="num">${r.pct}</td><td class="num">${r.correct}/${quiz.questions.length}</td>
+        <td>${r.viol ? `<span class="pill bad" title="${esc(r.violations.map(v => `${new Date(v.at).toLocaleTimeString()} · ${VIOL_LABEL[v.t] || v.t}${v.secs ? ` (${v.secs}s away)` : ''}`).join('\n'))}">${r.viol} · ${[...new Set(r.violations.map(v => v.t))].join(', ')}</span>` : '<span class="muted">None</span>'}</td>
+        <td>${r.submitted ? (r.auto ? '<span class="pill closed">Time up</span>' : '<span class="pill live">Submitted</span>') : '<span class="pill info">In progress</span>'}</td><td class="num">${r.taken ? fmtTime(r.taken) : '—'}</td><td class="muted">${fmtDate(r.submittedAt)}</td></tr>`).join('')}
+      ${missing.map(roll => `<tr><td class="num muted">—</td><td class="mono">${esc(roll)}</td><td>${esc(rm.get(roll)?.name)}</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td></td><td><span class="pill draft">Not started</span></td><td></td><td></td></tr>`).join('')}
+    </tbody></table></div></section>
+    <section class="panel"><div><div class="label">Item analysis · share of submitted students who got each question right</div><h3>Question accuracy</h3></div>
+      ${done.length ? `<div class="bars">${perQ.map((p, i) => `<div class="barrow" title="${esc(p.q.text)}"><span class="mono">Q${i + 1}</span><div class="track"><i class="${p.rate < .4 ? 'low' : ''}" style="width:${Math.round(p.rate * 100)}%"></i></div><span class="mono" style="text-align:right">${Math.round(p.rate * 100)}%</span></div>`).join('')}</div>
+      <p class="small muted">Red bars are under 40%: worth revisiting in class. Hover a row to see the question.</p>` : '<p class="muted">Appears after the first submission.</p>'}</section>`;
+}
+
+/* ---------- student ---------- */
+function myQuizzes(){ return S.index.filter(q => (q.status === 'live' || S.mySub?.attempts?.[q.id]) && (!S.roll || q.allowedRolls.includes(S.roll) || S.mySub?.attempts?.[q.id])); }
+function studentView(){
+  if (!S.uid) return `<section class="panel"><div class="empty"><h3>Sign in to take quizzes</h3><p>Open this page while signed in to claude.ai with the access your teacher shared.</p></div></section>`;
+  if (S.take) return examView();
+  if (S.reviewQuiz) return reviewView(S.full[S.reviewQuiz]);
+  if (!S.roll) return `<section class="panel" style="max-width:480px;margin:0 auto;width:100%"><div><div class="label">Student sign-in</div><h2>Enter your roll number</h2></div>
+    <p class="muted">Use the roll number or PRN exactly as it appears on your class list. It's tied to your account after your first quiz.</p>
+    <label class="field"><span>Roll number</span><input type="text" id="s-roll" class="mono" autocomplete="off" placeholder="e.g. AIML-A-01"></label>
+    <div class="row"><button class="btn primary" data-act="set-roll">Continue</button></div></section>`;
+  const pre = S.preStart && S.index.find(q => q.id === S.preStart);
+  if (pre) return `<section class="panel" style="max-width:640px;margin:0 auto;width:100%"><div><div class="label">Before you start · <span class="mono">${esc(S.roll)}</span></div><h2>${esc(pre.title)}</h2></div>
+    <div class="qz-facts"><span><b>${pre.n}</b> questions</span><span><b>${pre.totalMarks}</b> marks</span><span><b>${pre.durationMin}</b> min</span></div>
+    <div class="confirm"><b>This quiz is proctored</b>
+      <ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+        <li>Stay on this tab. Switching tabs, opening another app or website, or minimising the window is recorded.</li>
+        <li>Copying, cutting, pasting, right-clicking and dragging in text or files from other sites are blocked and recorded.</li>
+        <li>The quiz opens in full screen where your browser allows it. Leaving full screen is recorded.</li>
+        <li>${esc(rulesText(pre))}</li>
+        <li>Your teacher sees every violation with its time.</li>
+      </ul></div>
+    <p class="small muted">The timer starts when you press Start and keeps running if you close the page.</p>
+    <div class="row"><button class="btn primary" data-act="start-go" data-id="${pre.id}">I agree, start quiz</button><button class="btn ghost" data-act="pre-cancel">Back</button></div></section>`;
+  const list = myQuizzes();
+  const locked = !!S.mySub?.roll;
+  return `<section class="panel"><div class="panel-head"><div><div class="label">Signed in as <span class="mono">${esc(S.roll)}</span></div><h2>Your quizzes</h2></div>
+      ${locked ? '' : '<button class="btn sm ghost" data-act="change-roll">Change roll number</button>'}</div>
+    ${list.length ? `<div class="quizzes">${list.map(q => {
+      const a = S.mySub?.attempts?.[q.id];
+      let state, btn;
+      if (a?.submittedAt){ state = q.released ? '<span class="pill info">Result out</span>' : '<span class="pill live">Submitted</span>'; btn = q.released ? `<button class="btn sm primary" data-act="review" data-id="${q.id}">See result</button>` : '<span class="small muted">Your teacher will release results.</span>'; }
+      else if (q.status !== 'live'){ state = '<span class="pill closed">Closed</span>'; btn = '<span class="small muted">This quiz is closed.</span>'; }
+      else if (a){ state = '<span class="pill info">In progress</span>'; btn = `<button class="btn sm primary" data-act="start" data-id="${q.id}">Resume</button>`; }
+      else { state = '<span class="pill live">Open</span>'; btn = `<button class="btn sm primary" data-act="start" data-id="${q.id}">Start quiz</button>`; }
+      return `<article class="qz"><div>${state}</div><h3>${esc(q.title)}</h3>
+        <div class="qz-facts"><span><b>${q.n}</b> questions</span><span><b>${q.totalMarks}</b> marks</span><span><b>${q.durationMin}</b> min</span></div>
+        ${!a ? `<p class="small muted">Proctored: tab switching, copy and paste cost marks.</p>` : ''}
+        <div class="qz-actions">${btn}</div></article>`; }).join('')}</div>`
+      : `<div class="empty"><h3>No open quizzes for ${esc(S.roll)}</h3><p>Quizzes appear here when your teacher sets them live. If one should be here, check your roll number with your teacher.</p></div>`}
+  </section>`;
+}
+function buildOrder(q){
+  const rand = rng(hashStr((S.uid || '') + q.id));
+  const ids = q.questions.map(x => x.id);
+  const order = q.shuffle ? shuffled(ids, rand) : ids;
+  const opt = {};
+  q.questions.forEach(x => { const idx = x.options.map((_, i) => i); opt[x.id] = q.shuffle ? shuffled(idx, rand) : idx; });
+  return { order, opt };
+}
+/* Answers are kept on the device at once and synced to the shared database every 15–20 s
+   (a random offset per student, so 80 students don't all save at the same moment).
+   Start, submit, violations that end the quiz, and leaving the tab sync immediately. */
+const SYNC_MS = 15000 + Math.floor(Math.random() * 5000);
+let saveChain = Promise.resolve(), pendingSync = false, lastSync = 0, syncWarned = false;
+function touch(){
+  const a = S.take && S.mySub?.attempts?.[S.take.id];
+  if (a){ a.updatedAt = Date.now(); store('qd.att.' + S.take.id, JSON.stringify(a)); }
+  pendingSync = true;
+}
+function flush(){
+  if (!S.mySub) return saveChain;
+  pendingSync = false; lastSync = Date.now();
+  const body = clone(S.mySub);
+  saveChain = saveChain.then(() => S.db.doc('subs/' + S.uid).set(body)).then(() => { syncWarned = false; }).catch(() => {
+    pendingSync = true;
+    if (!syncWarned){ syncWarned = true; toast('Answers are saved on this device and will sync when the connection returns.'); }
+  });
+  return saveChain;
+}
+function saveSub(now){ touch(); if (now) return flush(); }
+setInterval(() => { if (pendingSync && Date.now() - lastSync >= SYNC_MS) flush(); }, 1000);
+
+async function startQuiz(id){
+  const meta = S.index.find(x => x.id === id); if (!meta) return;
+  if (!meta.allowedRolls.includes(S.roll)) return toast(`Roll number ${S.roll} isn't on the list for this quiz. Check with your teacher.`);
+  // One read of the questions per student, at start; then nothing more until submit.
+  if (!S.full[id]){
+    try { const d = await S.db.doc('quizzes/' + id).get(); if (!d.exists) return toast('This quiz is no longer available.'); S.full[id] = { id, ...d.data() }; }
+    catch { return toast('Couldn\'t load the quiz. Check your connection and press Start again.'); }
+  }
+  const q = S.full[id];
+  // Re-read the record first so a fresh start never overwrites earlier attempts.
+  if (!(await loadMySub()) && !S.mySubLoaded) return toast('Couldn\'t load your record. Check your connection and press Start again.');
+  S.mySub = S.mySub ? clone(S.mySub) : { attempts: {} };
+  S.mySub.roll = S.roll; S.mySub.attempts = S.mySub.attempts || {};
+  if (!S.mySub.attempts[id]) { S.mySub.attempts[id] = { roll: S.roll, startedAt: Date.now(), answers: {}, marked: {} }; await saveSub(true); }
+  else {
+    // Resume: prefer this device's backup if it has newer answers than the last sync.
+    try { const loc = JSON.parse(store('qd.att.' + id) || 'null'); const srv = S.mySub.attempts[id];
+      if (loc && !srv.submittedAt && loc.startedAt === srv.startedAt && (loc.updatedAt || 0) > (srv.updatedAt || 0)){ S.mySub.attempts[id] = loc; pendingSync = true; } } catch {}
+  }
+  const a = S.mySub.attempts[id];
+  S.take = { id, ...buildOrder(q), cur: 0, confirm: false, deadline: a.startedAt + q.durationMin * 60000 };
+  store('qd.roll', S.roll);
+  if (Date.now() >= S.take.deadline) return submitQuiz(true);
+  startTimer(); render();
+}
+let timerI;
+function startTimer(){ clearInterval(timerI); timerI = setInterval(tick, 1000); tick(); }
+function tick(){
+  if (!S.take) return clearInterval(timerI);
+  const left = S.take.deadline - Date.now(), el = $('#timer');
+  if (el){ el.textContent = fmtTime(left); el.classList.toggle('low', left < 60000); }
+  if (left <= 0) submitQuiz(true);
+}
+function checkClosed(){
+  if (!S.indexLoaded) return false;
+  const q = S.index.find(x => x.id === S.take.id);
+  if (!q || q.status !== 'live'){ submitQuiz(true, 'Your teacher closed this quiz, so your answers were submitted.'); return true; }
+  return false;
+}
+async function submitQuiz(auto, msg){
+  if (!S.take) return;
+  const id = S.take.id; clearInterval(timerI);
+  const a = S.mySub.attempts[id];
+  if (!a.submittedAt){ a.submittedAt = Math.min(Date.now(), S.take.deadline); a.auto = !!auto; }
+  S.take = null;
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch {}
+  await saveSub(true);
+  toast(msg || (auto ? 'Time is up. Your answers were submitted.' : 'Submitted. Your answers are recorded.'));
+  render();
+}
+function examView(){
+  const t = S.take, q = S.full[t.id], a = S.mySub.attempts[t.id];
+  const qid = t.order[t.cur], item = q.questions.find(x => x.id === qid);
+  const answered = t.order.filter(id => a.answers[id] !== undefined).length;
+  const unanswered = t.order.length - answered;
+  const pen = penaltyOf(q, a), w = t.warn;
+  const warnBar = w ? `<div class="warnbar" role="alert"><div><b>Violation recorded: ${esc(VIOL_LABEL[w.type] || w.type)}.</b>
+      ${pen.v <= pen.p.free ? `This was warning ${pen.v} of ${pen.p.free}. The next one costs marks.` : `${pen.ded} mark${pen.ded == 1 ? '' : 's'} deducted so far.`}
+      ${pen.p.maxV ? `The quiz is submitted automatically at ${pen.p.maxV} violations (you have ${pen.v}).` : ''}</div>
+      <button class="btn sm" data-act="warn-ok">Back to quiz</button></div>` : '';
+  return `${warnBar}<div class="exam-head"><div><div class="label">${esc(S.roll)} · ${q.totalMarks} marks</div><h2>${esc(q.title)}</h2></div>
+      <div class="row"><span class="pill ${pen.v ? 'bad' : 'draft'}" title="${esc(rulesText(q))}">${pen.v} violation${pen.v === 1 ? '' : 's'}${pen.ded ? ` · −${pen.ded}` : ''}</span><span class="small muted">${answered}/${t.order.length} answered</span><span class="timer" id="timer" role="timer" aria-live="off">${fmtTime(t.deadline - Date.now())}</span></div></div>
+    <div class="exam">
+      <section class="panel">
+        <div class="qmeta"><span class="mono">Question ${t.cur + 1} of ${t.order.length}</span><span>${item.marks} mark${item.marks == 1 ? '' : 's'}</span><span>${esc(item.topic)}</span></div>
+        <p class="qtext">${esc(item.text)}</p>
+        <div class="choices" role="group" aria-label="Options">${t.opt[qid].map((orig, i) => `<button class="choice" data-act="pick" data-v="${orig}" aria-pressed="${a.answers[qid] === orig}"><span class="bub">${LETTERS[i]}</span><span>${esc(item.options[orig])}</span></button>`).join('')}</div>
+        <div class="row" style="justify-content:space-between">
+          <div class="row"><button class="btn" data-act="prev" ${t.cur ? '' : 'disabled'}>Previous</button><button class="btn" data-act="next" ${t.cur < t.order.length - 1 ? '' : 'disabled'}>Next</button></div>
+          <div class="row"><button class="btn ghost sm" data-act="mark">${a.marked?.[qid] ? 'Unmark review' : 'Mark for review'}</button>${a.answers[qid] !== undefined ? '<button class="btn ghost sm" data-act="clear">Clear answer</button>' : ''}</div>
+        </div>
+        <p class="small muted">Keys: A–${LETTERS[item.options.length - 1]} to choose, ← → to move.</p>
+      </section>
+      <aside class="panel">
+        <div class="label">Answer sheet</div>
+        <div class="palette">${t.order.map((id, i) => `<button class="pal ${a.answers[id] !== undefined ? 'ans' : ''} ${i === t.cur ? 'cur' : ''} ${a.marked?.[id] ? 'mark' : ''}" data-act="goto" data-i="${i}" aria-label="Question ${i + 1}">${i + 1}</button>`).join('')}</div>
+        <div class="legend"><span><i style="background:var(--omr);border-color:var(--omr)"></i>Answered</span><span><i></i>Not answered</span><span><i style="background:var(--warn);border-color:var(--warn);border-radius:50%"></i>For review</span></div>
+        ${t.confirm ? `<div class="confirm"><b>Submit now?</b><p class="small">${unanswered ? `${unanswered} question${unanswered === 1 ? ' is' : 's are'} unanswered.` : 'All questions answered.'} You can't change answers after submitting.</p>
+          <div class="row"><button class="btn primary" data-act="submit-yes">Submit</button><button class="btn ghost" data-act="submit-no">Keep working</button></div></div>`
+          : `<button class="btn primary" data-act="submit-ask">Submit quiz</button>`}
+      </aside></div>`;
+}
+function reviewView(q){
+  if (!q || !q.released){ S.reviewQuiz = null; return studentView(); }
+  const a = S.mySub?.attempts?.[q.id] || { answers: {} }, key = q.key || {};
+  let score = 0, correct = 0;
+  q.questions.forEach(x => { if (a.answers[x.id] === key[x.id]){ score += +x.marks || 1; correct++; } });
+  const pen = penaltyOf(q, a), raw = score;
+  score = Math.max(0, raw - pen.ded);
+  return `<section class="panel"><div class="panel-head"><div><div class="label">Result · <span class="mono">${esc(a.roll || S.roll)}</span></div><h2>${esc(q.title)}</h2></div><button class="btn sm" data-act="back">All quizzes</button></div>
+    <div class="row" style="gap:24px;align-items:flex-end"><div><div class="scorebig">${score}<span class="muted" style="font-size:1.4rem"> / ${q.totalMarks}</span></div><div class="muted">${pct(score, q.totalMarks)}% · ${correct} of ${q.questions.length} correct</div>
+      ${pen.v ? `<div class="small" style="color:var(--bad)">${raw} marks earned − ${pen.ded} for ${pen.v} proctoring violation${pen.v === 1 ? '' : 's'}${pen.ded ? '' : ' (within free warnings)'}</div>` : ''}</div>
+      <div class="small muted">Submitted ${fmtDate(a.submittedAt)}${a.submittedAt && a.startedAt ? ' · took ' + fmtTime(a.submittedAt - a.startedAt) : ''}</div></div></section>
+    <section class="panel"><h3>Answer review</h3><div class="review">${q.questions.map((x, i) => { const mine = a.answers[x.id], ok = mine === key[x.id];
+      return `<article class="qcard ${ok ? 'right' : 'wrong'}"><p><b class="mono muted">${i + 1}.</b> ${esc(x.text)}</p>
+        <div class="opts">${x.options.map((o, j) => { const isKey = j === key[x.id], isMine = j === mine; return `<div class="${isKey ? 'right' : ''}"><span class="bub sm ${isKey ? 'ok fill' : isMine ? 'no fill' : ''}">${LETTERS[j]}</span><span>${esc(o)}${isMine ? ' <span class="small muted">(your answer)</span>' : ''}</span></div>`; }).join('')}</div>
+        <div class="qmeta"><span>${ok ? `+${x.marks}` : mine === undefined ? 'Not answered' : '0'}</span><span>${esc(x.topic)}</span></div></article>`; }).join('')}</div></section>`;
+}
+
+/* ---------- events ---------- */
+function bind(){
+  ['students', 'bank'].forEach(kind => {
+    const inp = $('#file-' + kind); if (!inp) return;
+    inp.onchange = () => inp.files[0] && handleUpload(kind, inp.files[0]);
+    const dz = document.querySelector(`[data-drop="${kind}"]`);
+    dz.ondragover = e => { e.preventDefault(); dz.classList.add('over'); };
+    dz.ondragleave = () => dz.classList.remove('over');
+    dz.ondrop = e => { e.preventDefault(); dz.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) handleUpload(kind, f); };
+  });
+  document.querySelectorAll('input[name^="mode-"]').forEach(r => r.onchange = () => { S.pending.mode = r.value; });
+  const on = (id, ev, fn) => { const el = $('#' + id); if (el) el['on' + ev] = fn; };
+  on('roster-q', 'input', e => { S.rosterFilter = e.target.value; renderKeepFocus('roster-q'); });
+  on('bank-q', 'input', e => { S.bankFilter.q = e.target.value; renderKeepFocus('bank-q'); });
+  on('bank-topic', 'change', e => { S.bankFilter.topic = e.target.value; render(); });
+  on('bank-diff', 'change', e => { S.bankFilter.diff = e.target.value; render(); });
+  on('b-title', 'input', e => S.builder.title = e.target.value);
+  on('b-count', 'input', e => { S.builder.count = e.target.value; });
+  on('b-count', 'change', () => render());
+  on('b-duration', 'input', e => S.builder.duration = e.target.value);
+  on('b-diff', 'change', e => { S.builder.diff = e.target.value; render(); });
+  on('b-shuffle', 'change', e => S.builder.shuffle = e.target.checked);
+  on('b-penalty', 'input', e => S.builder.penalty = e.target.value);
+  on('b-free', 'input', e => S.builder.free = e.target.value);
+  on('b-maxv', 'input', e => S.builder.maxV = e.target.value);
+  document.querySelectorAll('[data-topic]').forEach(c => c.onchange = () => { const t = c.dataset.topic; S.builder.topics = c.checked ? [...S.builder.topics, t] : S.builder.topics.filter(x => x !== t); render(); });
+  document.querySelectorAll('[data-div]').forEach(c => c.onchange = () => { const d = c.dataset.div; S.builder.divisions = c.checked ? [...S.builder.divisions, d] : S.builder.divisions.filter(x => x !== d); render(); });
+  on('r-quiz', 'change', e => { S.resultsQuiz = e.target.value; render(); });
+  on('s-roll', 'keydown', e => { if (e.key === 'Enter') act('set-roll'); });
+}
+function renderKeepFocus(id){ const el = $('#' + id), pos = el.selectionStart; render(); const n = $('#' + id); if (n){ n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }
+
+async function act(a, el){
+  const id = el?.dataset.id;
+  switch (a){
+    case 'as-student': S.view = 'student'; store('qd.view', 'student'); render(); break;
+    case 'as-teacher': S.view = 'teacher'; store('qd.view', 'teacher'); render(); break;
+    case 'cancel-pending': S.pending = null; render(); break;
+    case 'save-pending': el.disabled = true; try { await savePending(); } catch { el.disabled = false; } break;
+    case 'read-paste': { const t = $('#paste-' + el.dataset.kind).value; if (!t.trim()) return toast('Paste rows first, with the header row on top.'); handleUpload(el.dataset.kind, t); break; }
+    case 'sample': loadSample(el.dataset.kind); break;
+    case 'rm-student': removeStudent(id); break;
+    case 'rm-q': removeQuestion(id); break;
+    case 'create-quiz': el.disabled = true; try { await createQuiz(); } finally { el.disabled = false; } break;
+    case 'q-live': setQuiz(id, { status: 'live' }, 'Quiz is live. Students on its list can start now.'); break;
+    case 'q-close': setQuiz(id, { status: 'closed' }, 'Quiz closed. Anyone still answering is submitted automatically.'); break;
+    case 'q-release': releaseResults(id, !S.quizzes.find(q => q.id === id)?.released); break;
+    case 'q-results': S.resultsQuiz = id; S.tab = 'results'; store('qd.tab', 'results'); render(); break;
+    case 'q-delete-ask': S.confirmDelete = id; render(); break;
+    case 'q-delete-cancel': S.confirmDelete = null; render(); break;
+    case 'q-delete': deleteQuiz(id); break;
+    case 'export': exportCSV(S.quizzes.find(q => q.id === S.resultsQuiz)); break;
+    case 'set-roll': { const v = ($('#s-roll')?.value || '').trim().toUpperCase(); if (!v) return toast('Enter your roll number.');
+      const known = S.index.some(q => q.allowedRolls.includes(v)); const anyLive = S.index.some(q => q.status === 'live');
+      if (anyLive && !known) toast(`${v} isn't on any quiz list yet. Check it matches your class list.`);
+      S.roll = v; store('qd.roll', v); render(); break; }
+    case 'change-roll': S.roll = ''; store('qd.roll', ''); render(); break;
+    case 'start': S.preStart = id; render(); break;
+    case 'pre-cancel': S.preStart = null; render(); break;
+    case 'start-go': S.preStart = null; enterFullscreen(); startQuiz(id); break;
+    case 'warn-ok': if (S.take){ S.take.warn = null; enterFullscreen(); render(); } break;
+    case 'review': {   // one read, only when the student asks for their result
+      try { const d = await S.db.doc('quizzes/' + id).get(); if (d.exists) S.full[id] = { id, ...d.data() }; } catch { return toast('Couldn\'t load the result. Try again.'); }
+      S.reviewQuiz = id; render(); break; }
+    case 'back': S.reviewQuiz = null; render(); break;
+    case 'pick': case 'clear': case 'mark': {
+      const t = S.take, at = S.mySub.attempts[t.id], qid = t.order[t.cur];
+      if (a === 'pick') at.answers[qid] = +el.dataset.v;
+      if (a === 'clear') delete at.answers[qid];
+      if (a === 'mark'){ at.marked = at.marked || {}; at.marked[qid] = !at.marked[qid]; }
+      saveSub(); render(); break; }
+    case 'prev': S.take.cur = Math.max(0, S.take.cur - 1); render(); break;
+    case 'next': S.take.cur = Math.min(S.take.order.length - 1, S.take.cur + 1); render(); break;
+    case 'goto': S.take.cur = +el.dataset.i; render(); break;
+    case 'submit-ask': S.take.confirm = true; render(); break;
+    case 'submit-no': S.take.confirm = false; render(); break;
+    case 'submit-yes': submitQuiz(false); break;
+  }
+}
+document.addEventListener('click', e => {
+  const tab = e.target.closest('[data-tab]');
+  if (tab){ S.tab = tab.dataset.tab; store('qd.tab', S.tab); S.pending = null; render(); return; }
+  const b = e.target.closest('[data-act]');
+  if (b && !b.disabled) act(b.dataset.act, b);
+});
+document.addEventListener('keydown', e => {
+  if (!S.take || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) return;
+  const t = S.take, q = S.full[t.id], qid = t.order[t.cur];
+  const k = e.key.toUpperCase(), i = LETTERS.indexOf(k);
+  const n = q.questions.find(x => x.id === qid).options.length;
+  if (i >= 0 && i < n){ S.mySub.attempts[t.id].answers[qid] = t.opt[qid][i]; saveSub(); render(); }
+  else if (e.key === 'ArrowRight' && t.cur < t.order.length - 1){ t.cur++; render(); }
+  else if (e.key === 'ArrowLeft' && t.cur > 0){ t.cur--; render(); }
+});
+window.addEventListener('beforeunload', () => { if (S.take && pendingSync) flush(); });
+window.addEventListener('pagehide', () => { if (S.take && pendingSync) flush(); });
+
+/* ---------- proctoring engine (active only while an exam is open) ---------- */
+const lastViol = {};
+function violation(type, extra){
+  if (!S.take) return;
+  const now = Date.now();
+  if (now - (lastViol[type] || 0) < 3000) return;   // one event per burst, e.g. Ctrl+C held down
+  lastViol[type] = now;
+  const q = S.full[S.take.id], a = S.mySub.attempts[S.take.id];
+  a.violations = a.violations || [];
+  a.violations.push({ t: type, at: now, ...(extra || {}) });
+  S.take.warn = { type };
+  const { v, p } = penaltyOf(q, a);
+  if (p.maxV && v >= p.maxV) return submitQuiz(true, `Submitted automatically after ${v} proctoring violations.`);
+  touch(); render();   // synced on the next interval, or at once if the student leaves the tab
+}
+let awayAt = 0, awayHidden = false;
+function goneAway(hidden){ if (!S.take) return; if (!awayAt) awayAt = Date.now(); if (hidden){ awayHidden = true; if (pendingSync) flush(); } }
+function cameBack(){
+  if (!S.take || !awayAt) return;
+  const ms = Date.now() - awayAt, hidden = awayHidden;
+  awayAt = 0; awayHidden = false;
+  if (hidden || ms > 1500) violation('tab', { secs: Math.round(ms / 1000) });
+}
+document.addEventListener('visibilitychange', () => document.hidden ? goneAway(true) : cameBack());
+window.addEventListener('blur', () => goneAway(false));
+window.addEventListener('focus', cameBack);
+[['copy', 'copy'], ['cut', 'cut'], ['paste', 'paste'], ['contextmenu', 'menu'], ['drop', 'drop']].forEach(([ev, type]) =>
+  document.addEventListener(ev, e => { if (!S.take) return; e.preventDefault(); violation(type); }, true));
+['dragover', 'dragstart', 'selectstart'].forEach(ev => document.addEventListener(ev, e => { if (S.take) e.preventDefault(); }, true));
+document.addEventListener('keyup', e => { if (S.take && e.key === 'PrintScreen') violation('screenshot'); });
+function enterFullscreen(){
+  const el = document.documentElement;
+  try { const p = el.requestFullscreen?.(); if (p) p.then(() => { if (S.take) S.take.fs = true; }).catch(() => {}); } catch {}
+}
+document.addEventListener('fullscreenchange', () => {
+  if (!S.take) return;
+  if (document.fullscreenElement) S.take.fs = true;
+  else if (S.take.fs){ S.take.fs = false; violation('fullscreen'); }
+});
+
+boot();
+</script>

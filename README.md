@@ -22,6 +22,13 @@ It runs as a [claude.ai Artifact](https://claude.ai): a single HTML page with a 
 - Faculty set the marks cut per violation, the number of free warnings, and auto-submit after N violations.
 - A browser page cannot detect a second device or OS-level screenshots, so supervise exams that count.
 
+**Faculty login**
+- The faculty side asks for a password before it shows students, questions or results. The first faculty member to open a group sets it, and each group has its own password.
+- An unlock lasts 8 hours in that browser tab. **Lock** ends it, and changing the password ends every open unlock.
+- After 5 wrong attempts there is a wait that doubles with each further mistake. The artifact's owner can reset a forgotten password; students, questions and results are kept.
+- Only a salted PBKDF2-SHA-256 hash is stored, in `staff/auth`, which only editors can read. No password is in this repository.
+- The password is a second lock on top of claude.ai access. What students can read or write is enforced by the database rules below, whether or not the faculty side is locked.
+
 ## Groups: one link per group
 
 Each group is a separate Artifact with its own link and its own database, so groups never share load. Each group is sized for 30 students.
@@ -52,6 +59,7 @@ Share each group's Artifact with only that group's students, at **Contributor** 
 
 | Path | Who can read | Contents |
 |---|---|---|
+| `staff/auth` | Faculty | Faculty password hash, salt and iteration count |
 | `staff/roster` | Faculty | Student list |
 | `staff/bank` | Faculty | Question bank with answers |
 | `staff/key_<quizId>` | Faculty | Answer key for one quiz |

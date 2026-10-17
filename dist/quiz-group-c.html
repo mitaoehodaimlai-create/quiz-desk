@@ -76,7 +76,7 @@ main{max-width:1120px; margin:0 auto; padding-inline:16px; padding-block:24px 64
 .btn:disabled{opacity:.45; cursor:not-allowed}
 .field{display:flex; flex-direction:column; gap:5px; min-width:0}
 .field > span{font-size:.82rem; font-weight:500; color:var(--muted)}
-input[type=text],input[type=number],input[type=search],select,textarea{border:1px solid var(--line-strong); background:var(--sheet); border-radius:8px; padding:8px 10px; width:100%; min-width:0}
+input[type=text],input[type=number],input[type=search],input[type=password],select,textarea{border:1px solid var(--line-strong); background:var(--sheet); border-radius:8px; padding:8px 10px; width:100%; min-width:0}
 textarea{font-family:var(--mono); font-size:.82rem; min-height:120px; resize:vertical}
 .fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px}
 .check{display:flex; gap:8px; align-items:center; font-size:.9rem; cursor:pointer}
@@ -241,6 +241,7 @@ const S = {
   bankFilter: { q: '', topic: '', diff: '' }, rosterFilter: '',
   builder: { title: '', duration: 20, count: 10, topics: [], diff: '', divisions: [], shuffle: true, penalty: 1, free: 1, maxV: 5 },
   preStart: null,
+  auth: null, staffLoaded: false, isOwner: false, unlocked: false, lockErr: '', fails: 0, lockedUntil: 0, confirmReset: false, pwPanel: false,
   resultsQuiz: null, confirmDelete: null,
   roll: store('qd.roll') || '', take: null, studentScreen: 'list', reviewQuiz: null,
 };
@@ -264,8 +265,9 @@ async function boot(){
     S.db = db;
     S.uid = user ? await user.id() : null;
     S.isTeacher = user ? await user.canEdit() : false;
+    S.isOwner = user ? await user.isOwner() : false;
   } else {
-    S.db = memoryDB(); S.local = true; S.uid = 'preview-' + rid(); S.isTeacher = true;
+    S.db = memoryDB(); S.local = true; S.uid = 'preview-' + rid(); S.isTeacher = true; S.isOwner = true;
   }
   S.view = S.isTeacher ? (store('qd.view') || 'teacher') : 'student';
   subscribe();
@@ -276,10 +278,11 @@ function subscribe(){
   const db = S.db;
   if (S.isTeacher){
     db.collection('staff').onSnapshot(snap => {
-      S.keys = {};
+      S.keys = {}; S.auth = null; S.staffLoaded = true;
       for (const d of snap.docs){
         const v = d.data() || {};
-        if (d.id === 'roster') S.roster = v.students || [];
+        if (d.id === 'auth') S.auth = v;
+        else if (d.id === 'roster') S.roster = v.students || [];
         else if (d.id === 'bank') S.bank = v.questions || [];
         else if (d.id.startsWith('key_')) S.keys[d.id.slice(4)] = v;
       }
@@ -582,11 +585,12 @@ async function exportCSV(quiz){
 
 /* ---------- rendering: shared ---------- */
 function render(){
+  checkUnlock();
   renderTabs();
   const v = $('#view');
   if (!S.ready) return;
-  watchSubs(S.isTeacher && S.view === 'teacher' && (S.tab === 'quizzes' || S.tab === 'results'));
-  if (S.view === 'teacher') v.innerHTML = notices() + teacherView();
+  watchSubs(S.isTeacher && S.view === 'teacher' && S.unlocked && (S.tab === 'quizzes' || S.tab === 'results'));
+  if (S.view === 'teacher') v.innerHTML = notices() + (S.unlocked ? passwordPanel() + teacherView() : lockView());
   else v.innerHTML = notices() + studentView();
   bind();
 }
@@ -599,15 +603,81 @@ function renderTabs(){
   const tabs = $('#tabs'), end = $('#barEnd');
   $('#groupChip').textContent = GROUP.name;
   if (!S.ready){ tabs.innerHTML = ''; end.innerHTML = ''; return; }
-  if (S.view === 'teacher'){
+  if (S.view === 'teacher' && !S.unlocked){
+    tabs.innerHTML = '';
+    end.innerHTML = `<span class="role">Faculty · locked</span><button class="btn sm" data-act="as-student">Student view</button>`;
+  } else if (S.view === 'teacher'){
     const live = S.quizzes.filter(q => q.status === 'live').length;
     const t = [['students', 'Students', S.roster.length], ['bank', 'Question bank', S.bank.length], ['quizzes', 'Quizzes', S.quizzes.length], ['results', 'Results', null]];
     tabs.innerHTML = t.map(([k, l, c]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${l}${c !== null ? `<span class="count">${c}</span>` : ''}</button>`).join('');
-    end.innerHTML = `${live ? `<span class="pill live">${live} live</span>` : ''}<span class="role">Faculty</span><button class="btn sm" data-act="as-student">Student view</button>`;
+    end.innerHTML = `${live ? `<span class="pill live">${live} live</span>` : ''}<span class="role">Faculty</span><button class="btn sm" data-act="pw-panel">Password</button><button class="btn sm" data-act="lock">Lock</button><button class="btn sm" data-act="as-student">Student view</button>`;
   } else {
     tabs.innerHTML = '';
     end.innerHTML = `${S.roll ? `<span class="mono small">${esc(S.roll)}</span>` : ''}<span class="role">Student</span>${S.isTeacher && !S.take ? '<button class="btn sm" data-act="as-teacher">Faculty view</button>' : ''}`;
   }
+}
+
+/* ---------- faculty login ----------
+   The password is stored only as a salted PBKDF2-SHA-256 hash in staff/auth, which only
+   the artifact's editors can read. Each group's artifact has its own password. */
+const UNLOCK_KEY = 'qd.unlock.' + GROUP.name, UNLOCK_HOURS = 8, PBKDF2_ITER = 210000;
+function sess(k, v){ try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch { return null; } }
+const b64e = u8 => btoa(String.fromCharCode(...u8));
+const b64d = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function hashPassword(pass, salt, iter){
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: b64d(salt), iterations: iter }, key, 256);
+  return b64e(new Uint8Array(bits));
+}
+function checkUnlock(){
+  // An unlock lasts 8 hours in this browser tab; changing or resetting the password ends every unlock.
+  const until = +(sess(UNLOCK_KEY) || 0), ver = sess(UNLOCK_KEY + '.v');
+  S.unlocked = S.isTeacher && S.staffLoaded && !!S.auth && until > Date.now() && ver === String(S.auth.setAt);
+}
+function unlockNow(){ sess(UNLOCK_KEY, String(Date.now() + UNLOCK_HOURS * 3600000)); sess(UNLOCK_KEY + '.v', String(S.auth.setAt)); S.lockErr = ''; S.fails = 0; }
+async function setPassword(pass, confirmPass){
+  if (pass.length < 8) return S.lockErr = 'Use at least 8 characters.';
+  if (pass !== confirmPass) return S.lockErr = 'The two passwords don\'t match.';
+  const salt = b64e(crypto.getRandomValues(new Uint8Array(16)));
+  const auth = { salt, iter: PBKDF2_ITER, hash: await hashPassword(pass, salt, PBKDF2_ITER), setAt: Date.now() };
+  await write(() => S.db.doc('staff/auth').set(auth), 'Faculty password saved for ' + GROUP.name + '.');
+  S.auth = auth; unlockNow(); S.pwPanel = false;
+}
+async function tryUnlock(pass){
+  if (Date.now() < S.lockedUntil) return S.lockErr = `Too many wrong attempts. Try again in ${Math.ceil((S.lockedUntil - Date.now()) / 1000)} seconds.`;
+  if (!pass) return S.lockErr = 'Enter the faculty password.';
+  const ok = (await hashPassword(pass, S.auth.salt, S.auth.iter || PBKDF2_ITER)) === S.auth.hash;
+  if (ok) return unlockNow();
+  S.fails++;
+  if (S.fails >= 5){ S.lockedUntil = Date.now() + 30000 * Math.pow(2, S.fails - 5); S.lockErr = 'Too many wrong attempts. Wait 30 seconds and try again.'; }
+  else S.lockErr = `Wrong password. ${5 - S.fails} attempt${5 - S.fails === 1 ? '' : 's'} left before a short wait.`;
+}
+function lockView(){
+  const err = S.lockErr ? `<div class="issues" role="alert">${esc(S.lockErr)}</div>` : '';
+  const shell = (label, title, body) => `<section class="panel" style="max-width:440px;margin:0 auto;width:100%"><div><div class="label">${label}</div><h2>${title}</h2></div>${body}</section>`;
+  if (!S.staffLoaded) return shell('Faculty', 'Checking access…', '');
+  if (!S.auth) return shell('Faculty · ' + esc(GROUP.name), 'Set a faculty password', `
+    <p class="muted">The faculty side of ${esc(GROUP.name)} will ask for this password before showing students, questions and results. Each group link has its own password.</p>
+    <label class="field"><span>New password (8+ characters)</span><input type="password" id="pw-new" autocomplete="new-password"></label>
+    <label class="field"><span>Repeat password</span><input type="password" id="pw-new2" autocomplete="new-password"></label>
+    ${err}<div class="row"><button class="btn primary" data-act="pw-set">Save password and continue</button></div>`);
+  return shell('Faculty · ' + esc(GROUP.name), 'Enter faculty password', `
+    <label class="field"><span>Password</span><input type="password" id="pw-enter" autocomplete="current-password"></label>
+    ${err}<div class="row"><button class="btn primary" data-act="pw-unlock">Unlock</button></div>
+    ${S.isOwner ? (S.confirmReset
+      ? `<div class="confirm"><b>Reset the faculty password?</b><p class="small">The old password stops working and you set a new one. Students, questions and results are kept.</p><div class="row"><button class="btn danger" data-act="pw-reset">Reset password</button><button class="btn ghost" data-act="pw-reset-no">Cancel</button></div></div>`
+      : `<button class="btn ghost sm" data-act="pw-reset-ask" style="align-self:flex-start">Forgot it? Reset (owner only)</button>`)
+      : '<p class="small muted">Forgot it? Ask the owner of this quiz page to reset it.</p>'}`);
+}
+function passwordPanel(){
+  if (!S.pwPanel) return '';
+  return `<section class="panel"><div class="panel-head"><div><div class="label">Faculty password · ${esc(GROUP.name)}</div><h3>Change password</h3></div><button class="btn sm ghost" data-act="pw-panel">Close</button></div>
+    <div class="fields">
+      <label class="field"><span>Current password</span><input type="password" id="pw-cur" autocomplete="current-password"></label>
+      <label class="field"><span>New password (8+ characters)</span><input type="password" id="pw-new" autocomplete="new-password"></label>
+      <label class="field"><span>Repeat new password</span><input type="password" id="pw-new2" autocomplete="new-password"></label>
+    </div>${S.lockErr ? `<div class="issues" role="alert">${esc(S.lockErr)}</div>` : ''}
+    <div class="row"><button class="btn primary" data-act="pw-change">Change password</button></div></section>`;
 }
 
 /* ---------- teacher ---------- */
@@ -970,6 +1040,9 @@ function bind(){
   document.querySelectorAll('[data-div]').forEach(c => c.onchange = () => { const d = c.dataset.div; S.builder.divisions = c.checked ? [...S.builder.divisions, d] : S.builder.divisions.filter(x => x !== d); render(); });
   on('r-quiz', 'change', e => { S.resultsQuiz = e.target.value; render(); });
   on('s-roll', 'keydown', e => { if (e.key === 'Enter') act('set-roll'); });
+  on('pw-enter', 'keydown', e => { if (e.key === 'Enter') act('pw-unlock'); });
+  if (!S.unlocked) on('pw-new2', 'keydown', e => { if (e.key === 'Enter') act('pw-set'); });
+  if (S.view === 'teacher' && !S.unlocked) ($('#pw-enter') || $('#pw-new'))?.focus();
 }
 function renderKeepFocus(id){ const el = $('#' + id), pos = el.selectionStart; render(); const n = $('#' + id); if (n){ n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }
 
@@ -978,6 +1051,19 @@ async function act(a, el){
   switch (a){
     case 'as-student': S.view = 'student'; store('qd.view', 'student'); render(); break;
     case 'as-teacher': S.view = 'teacher'; store('qd.view', 'teacher'); render(); break;
+    case 'lock': sess(UNLOCK_KEY, null); S.pwPanel = false; S.pending = null; render(); toast('Faculty side locked.'); break;
+    case 'pw-panel': S.pwPanel = !S.pwPanel; S.lockErr = ''; render(); break;
+    case 'pw-set': el.disabled = true;
+      try { await setPassword($('#pw-new').value, $('#pw-new2').value); } catch {} render(); break;
+    case 'pw-unlock': el.disabled = true; await tryUnlock($('#pw-enter').value); render(); break;
+    case 'pw-change': { el.disabled = true;
+      const cur = $('#pw-cur').value, ok = cur && (await hashPassword(cur, S.auth.salt, S.auth.iter || PBKDF2_ITER)) === S.auth.hash;
+      if (!ok) S.lockErr = 'Current password is wrong.';
+      else { try { await setPassword($('#pw-new').value, $('#pw-new2').value); } catch {} }
+      render(); break; }
+    case 'pw-reset-ask': S.confirmReset = true; render(); break;
+    case 'pw-reset-no': S.confirmReset = false; render(); break;
+    case 'pw-reset': await write(() => S.db.doc('staff/auth').delete(), 'Password cleared. Set a new one.'); S.auth = null; S.confirmReset = false; S.lockErr = ''; render(); break;
     case 'cancel-pending': S.pending = null; render(); break;
     case 'save-pending': el.disabled = true; try { await savePending(); } catch { el.disabled = false; } break;
     case 'read-paste': { const t = $('#paste-' + el.dataset.kind).value; if (!t.trim()) return toast('Paste rows first, with the header row on top.'); handleUpload(el.dataset.kind, t); break; }

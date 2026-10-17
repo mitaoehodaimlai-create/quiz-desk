@@ -553,8 +553,10 @@ function results(quiz){
       if (v !== undefined && v !== null){ attempted++; if (v === key[q.id]){ score += +q.marks || 1; correct++; } }
     }
     const pen = penaltyOf(quiz, a), raw = score;
+    const tabEv = (a.violations || []).filter(v => v.t === 'tab');
+    const tabs = tabEv.length, awaySecs = tabEv.reduce((s, v) => s + (v.secs || 0), 0);
     score = Math.max(0, raw - pen.ded);
-    rows.push({ uid: sub.id, roll: a.roll, name: rosterMap.get(a.roll)?.name || '', division: rosterMap.get(a.roll)?.division || '', score, raw, viol: pen.v, ded: pen.ded, violations: a.violations || [], correct, attempted,
+    rows.push({ uid: sub.id, roll: a.roll, name: rosterMap.get(a.roll)?.name || '', division: rosterMap.get(a.roll)?.division || '', score, raw, tabs, awaySecs, viol: pen.v, ded: pen.ded, violations: a.violations || [], correct, attempted,
       pct: pct(score, quiz.totalMarks), submitted: !!a.submittedAt, auto: !!a.auto, startedAt: a.startedAt, submittedAt: a.submittedAt,
       taken: a.submittedAt ? a.submittedAt - a.startedAt : null, answers: a.answers || {}, onList: quiz.allowedRolls.includes(a.roll) });
   }
@@ -569,11 +571,11 @@ function results(quiz){
 async function exportCSV(quiz){
   const { rows, missing } = results(quiz);
   const cell = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
-  const lines = [['Rank','Roll No','Name','Division','Final score','Out of','Percent','Marks before penalty','Violations','Marks deducted','Violation details','Correct','Attempted','Status','Time taken','Submitted at'].join(',')];
+  const lines = [['Rank','Roll No','Name','Division','Final score','Out of','Percent','Marks before penalty','Tab switches','Time away (s)','Violations','Marks deducted','Violation details','Correct','Attempted','Status','Time taken','Submitted at'].join(',')];
   const vdet = r => r.violations.map(v => `${VIOL_LABEL[v.t] || v.t} at ${new Date(v.at).toLocaleTimeString()}${v.secs ? ` (${v.secs}s away)` : ''}`).join('; ');
-  rows.forEach((r, i) => lines.push([i + 1, r.roll, r.name, r.division, r.score, quiz.totalMarks, r.pct, r.raw, r.viol, r.ded, vdet(r), r.correct, r.attempted, r.submitted ? (r.auto ? 'Auto-submitted' : 'Submitted') : 'In progress', r.taken ? fmtTime(r.taken) : '', r.submittedAt ? new Date(r.submittedAt).toISOString() : ''].map(cell).join(',')));
+  rows.forEach((r, i) => lines.push([i + 1, r.roll, r.name, r.division, r.score, quiz.totalMarks, r.pct, r.raw, r.tabs, r.awaySecs, r.viol, r.ded, vdet(r), r.correct, r.attempted, r.submitted ? (r.auto ? 'Auto-submitted' : 'Submitted') : 'In progress', r.taken ? fmtTime(r.taken) : '', r.submittedAt ? new Date(r.submittedAt).toISOString() : ''].map(cell).join(',')));
   const rm = new Map(S.roster.map(s => [s.roll, s]));
-  missing.forEach(roll => lines.push(['', roll, rm.get(roll)?.name || '', rm.get(roll)?.division || '', 0, quiz.totalMarks, 0, 0, 0, 0, '', 0, 0, 'Absent', '', ''].map(cell).join(',')));
+  missing.forEach(roll => lines.push(['', roll, rm.get(roll)?.name || '', rm.get(roll)?.division || '', 0, quiz.totalMarks, 0, 0, 0, 0, 0, 0, '', 0, 0, 'Absent', '', ''].map(cell).join(',')));
   const csv = lines.join('\n'), filename = GROUP.name.replace(/\s+/g, '-') + '-' + quiz.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') + '-results.csv';
   if (S.downloads){
     try { await S.downloads.save({ filename, data: csv }); toast('Results saved as CSV.'); return; }
@@ -796,7 +798,7 @@ function quizzesView(){
         <h3>${esc(q.title)}</h3>
         <div class="qz-facts"><span><b>${q.questions.length}</b> Qs</span><span><b>${q.totalMarks}</b> marks</span><span><b>${q.durationMin}</b> min</span><span><b>${sub}/${q.allowedRolls.length}</b> submitted</span>${q.status === 'live' ? `<span><b>${now}</b> answering now</span>` : ''}</div>
         <p class="small muted">${q.divisions?.length ? 'Div ' + q.divisions.map(esc).join(', ') : 'Whole class'} · created ${fmtDate(q.createdAt)}</p>
-        <p class="small muted">Proctored: −${proctorOf(q).penalty} per violation after ${proctorOf(q).free} warning${proctorOf(q).free == 1 ? '' : 's'}${proctorOf(q).maxV ? `, auto-submit at ${proctorOf(q).maxV}` : ''}${r.rows.some(x => x.viol) ? ` · <b style="color:var(--bad)">${r.rows.filter(x => x.viol).length} flagged</b>` : ''}</p>
+        <p class="small muted">Proctored: −${proctorOf(q).penalty} per violation after ${proctorOf(q).free} warning${proctorOf(q).free == 1 ? '' : 's'}${proctorOf(q).maxV ? `, auto-submit at ${proctorOf(q).maxV}` : ''}${r.rows.some(x => x.tabs) ? ` · <b style="color:var(--bad)">${r.rows.reduce((s, x) => s + x.tabs, 0)} tab switches</b>` : ''}${r.rows.some(x => x.viol) ? ` · <b style="color:var(--bad)">${r.rows.filter(x => x.viol).length} flagged</b>` : ''}</p>
         <div class="qz-actions">
           ${q.status !== 'live' ? `<button class="btn sm primary" data-act="q-live" data-id="${q.id}">${q.status === 'closed' ? 'Reopen' : 'Go live'}</button>` : `<button class="btn sm" data-act="q-close" data-id="${q.id}">Close</button>`}
           <button class="btn sm" data-act="q-results" data-id="${q.id}">Results</button>
@@ -825,15 +827,17 @@ function resultsView(){
       <div class="stat"><span class="label">Average</span><b>${done.length ? avg.toFixed(1) + '%' : '—'}</b></div>
       <div class="stat"><span class="label">Highest</span><b>${done.length ? hi + '<span class="muted" style="font-size:1rem"> / ' + quiz.totalMarks + '</span>' : '—'}</b></div>
       <div class="stat"><span class="label">Scored 40%+</span><b>${done.length ? pass : '—'}</b></div>
+      <div class="stat"><span class="label">Tab switches</span><b style="${rows.some(r => r.tabs) ? 'color:var(--bad)' : ''}">${rows.reduce((s, r) => s + r.tabs, 0)}</b><span class="small muted">${rows.filter(r => r.tabs).length} student${rows.filter(r => r.tabs).length === 1 ? '' : 's'}</span></div>
       <div class="stat"><span class="label">With violations</span><b style="${rows.some(r => r.viol) ? 'color:var(--bad)' : ''}">${rows.filter(r => r.viol).length}</b></div>
     </div>
     ${rows.some(r => r.dup || !r.onList) ? `<div class="issues">Check flagged rows: the same roll number was used from more than one account, or by someone not on this quiz's list.</div>` : ''}
     <p class="small muted">Live view. Students' answers sync about every 15–20 seconds and immediately on submit, so in-progress scores can trail slightly.</p>
-    <div class="tbl-wrap scroll"><table><thead><tr><th class="num">#</th><th>Roll No</th><th>Name</th><th class="num">Score</th><th class="num">%</th><th class="num">Correct</th><th>Violations</th><th>Status</th><th class="num">Time</th><th>Submitted</th></tr></thead><tbody>
+    <div class="tbl-wrap scroll"><table><thead><tr><th class="num">#</th><th>Roll No</th><th>Name</th><th class="num">Score</th><th class="num">%</th><th class="num">Correct</th><th class="num">Tab switches</th><th>Violations</th><th>Status</th><th class="num">Time</th><th>Submitted</th></tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td class="num">${i + 1}</td><td class="mono">${esc(r.roll)} ${r.dup ? '<span class="pill bad">Repeat</span>' : ''}${!r.onList ? '<span class="pill bad">Not on list</span>' : ''}</td><td>${esc(r.name)}</td><td class="num">${r.score}/${quiz.totalMarks}${r.ded ? ` <span class="small" style="color:var(--bad)">(−${r.ded})</span>` : ''}</td><td class="num">${r.pct}</td><td class="num">${r.correct}/${quiz.questions.length}</td>
+        <td class="num" ${r.tabs ? `style="color:var(--bad)" title="${r.awaySecs}s away from the quiz in total"` : ''}>${r.tabs}${r.tabs ? ` <span class="small muted">(${fmtTime(r.awaySecs * 1000)} away)</span>` : ''}</td>
         <td>${r.viol ? `<span class="pill bad" title="${esc(r.violations.map(v => `${new Date(v.at).toLocaleTimeString()} · ${VIOL_LABEL[v.t] || v.t}${v.secs ? ` (${v.secs}s away)` : ''}`).join('\n'))}">${r.viol} · ${[...new Set(r.violations.map(v => v.t))].join(', ')}</span>` : '<span class="muted">None</span>'}</td>
         <td>${r.submitted ? (r.auto ? '<span class="pill closed">Time up</span>' : '<span class="pill live">Submitted</span>') : '<span class="pill info">In progress</span>'}</td><td class="num">${r.taken ? fmtTime(r.taken) : '—'}</td><td class="muted">${fmtDate(r.submittedAt)}</td></tr>`).join('')}
-      ${missing.map(roll => `<tr><td class="num muted">—</td><td class="mono">${esc(roll)}</td><td>${esc(rm.get(roll)?.name)}</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td></td><td><span class="pill draft">Not started</span></td><td></td><td></td></tr>`).join('')}
+      ${missing.map(roll => `<tr><td class="num muted">—</td><td class="mono">${esc(roll)}</td><td>${esc(rm.get(roll)?.name)}</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td></td><td><span class="pill draft">Not started</span></td><td></td><td></td></tr>`).join('')}
     </tbody></table></div></section>
     <section class="panel"><div><div class="label">Item analysis · share of submitted students who got each question right</div><h3>Question accuracy</h3></div>
       ${done.length ? `<div class="bars">${perQ.map((p, i) => `<div class="barrow" title="${esc(p.q.text)}"><span class="mono">Q${i + 1}</span><div class="track"><i class="${p.rate < .4 ? 'low' : ''}" style="width:${Math.round(p.rate * 100)}%"></i></div><span class="mono" style="text-align:right">${Math.round(p.rate * 100)}%</span></div>`).join('')}</div>
@@ -967,13 +971,13 @@ function examView(){
   const qid = t.order[t.cur], item = q.questions.find(x => x.id === qid);
   const answered = t.order.filter(id => a.answers[id] !== undefined).length;
   const unanswered = t.order.length - answered;
-  const pen = penaltyOf(q, a), w = t.warn;
+  const pen = penaltyOf(q, a), w = t.warn, tabCount = (a.violations || []).filter(v => v.t === 'tab').length;
   const warnBar = w ? `<div class="warnbar" role="alert"><div><b>Violation recorded: ${esc(VIOL_LABEL[w.type] || w.type)}.</b>
       ${pen.v <= pen.p.free ? `This was warning ${pen.v} of ${pen.p.free}. The next one costs marks.` : `${pen.ded} mark${pen.ded == 1 ? '' : 's'} deducted so far.`}
       ${pen.p.maxV ? `The quiz is submitted automatically at ${pen.p.maxV} violations (you have ${pen.v}).` : ''}</div>
       <button class="btn sm" data-act="warn-ok">Back to quiz</button></div>` : '';
   return `${warnBar}<div class="exam-head"><div><div class="label">${esc(S.roll)} · ${q.totalMarks} marks</div><h2>${esc(q.title)}</h2></div>
-      <div class="row"><span class="pill ${pen.v ? 'bad' : 'draft'}" title="${esc(rulesText(q))}">${pen.v} violation${pen.v === 1 ? '' : 's'}${pen.ded ? ` · −${pen.ded}` : ''}</span><span class="small muted">${answered}/${t.order.length} answered</span><span class="timer" id="timer" role="timer" aria-live="off">${fmtTime(t.deadline - Date.now())}</span></div></div>
+      <div class="row"><span class="pill ${tabCount ? 'bad' : 'draft'}" title="Times you left this quiz tab">Tab switches: ${tabCount}</span><span class="pill ${pen.v ? 'bad' : 'draft'}" title="${esc(rulesText(q))}">${pen.v} violation${pen.v === 1 ? '' : 's'}${pen.ded ? ` · −${pen.ded}` : ''}</span><span class="small muted">${answered}/${t.order.length} answered</span><span class="timer" id="timer" role="timer" aria-live="off">${fmtTime(t.deadline - Date.now())}</span></div></div>
     <div class="exam">
       <section class="panel">
         <div class="qmeta"><span class="mono">Question ${t.cur + 1} of ${t.order.length}</span><span>${item.marks} mark${item.marks == 1 ? '' : 's'}</span><span>${esc(item.topic)}</span></div>

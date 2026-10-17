@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quiz Desk</title>
+<meta name="description" content="A proctored MCQ quiz platform: upload a student list and question bank, run timed quizzes, see live results.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --paper:#f4f5f8; --sheet:#fff; --ink:#17202d; --muted:#5b6677; --line:#dde1e9;
+  --pen:#2546b8; --pen-ink:#fff; --omr:#c0245e; --warn:#9a5c00; --warn-soft:#fbf0dc;
+  --display:"Bricolage Grotesque","Avenir Next","Segoe UI",system-ui,sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root{
+  --paper:#10141b; --sheet:#171c25; --ink:#e6e9ef; --muted:#9aa3b3; --line:#283040;
+  --pen:#8fa6ff; --pen-ink:#0e1430; --omr:#f2709f; --warn:#e8ac4c; --warn-soft:#33270f; color-scheme:dark } }
+*{box-sizing:border-box}
+body{margin:0; background:var(--paper); color:var(--ink); font:16px/1.6 var(--body)}
+main{max-width:760px; margin:0 auto; padding:56px 16px 72px; display:flex; flex-direction:column; gap:28px}
+h1,h2{font-family:var(--display); line-height:1.1; margin:0; text-wrap:balance}
+h1{font-size:clamp(2.2rem,6vw,3.2rem)} h2{font-size:1.25rem}
+p{margin:0} .muted{color:var(--muted)}
+.mark{display:grid; grid-template-columns:repeat(3,10px); gap:4px; margin-bottom:14px}
+.mark i{width:10px; height:10px; border-radius:50%; border:2px solid var(--omr)} .mark i.f{background:var(--omr)}
+.row{display:flex; gap:10px; flex-wrap:wrap}
+.btn{display:inline-flex; align-items:center; padding:10px 18px; border-radius:8px; border:1px solid var(--line); background:var(--sheet); color:var(--ink); text-decoration:none; font-weight:600}
+.btn.primary{background:var(--pen); border-color:var(--pen); color:var(--pen-ink)}
+.btn:focus-visible{outline:2px solid var(--pen); outline-offset:2px}
+.note{border-radius:10px; padding:14px 16px; background:var(--warn-soft); color:var(--warn); font-size:.95rem}
+.grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px}
+.card{background:var(--sheet); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; flex-direction:column; gap:6px}
+.card p{font-size:.93rem; color:var(--muted)}
+ol{margin:0; padding-left:20px; display:flex; flex-direction:column; gap:6px}
+code{font-size:.9em}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="mark" aria-hidden="true"><i class="f"></i><i></i><i></i><i></i><i class="f"></i><i></i></div>
+    <h1>Quiz Desk</h1>
+    <p class="muted" style="margin-top:10px;max-width:60ch">A proctored MCQ quiz platform for a class. Faculty upload a student list and a question bank, run timed quizzes, and see results as students submit.</p>
+  </header>
+
+  <div class="row">
+    <a class="btn primary" href="demo.html">Open the demo</a>
+    <a class="btn" href="https://github.com/mitaoehodaimlai-create/quiz-desk">Source on GitHub</a>
+  </div>
+
+  <p class="note">The demo runs entirely in your browser. Uploads, quizzes and answers stay in that tab and are cleared when you reload. Real classes use the claude.ai version, where results are stored and shared between faculty and students.</p>
+
+  <section class="grid">
+    <div class="card"><h2>Upload</h2><p>Student lists and question banks from Excel or CSV, matched by column header.</p></div>
+    <div class="card"><h2>Proctor</h2><p>Tab switches, copy, paste and content from other sites cost marks, with auto-submit after repeated violations.</p></div>
+    <div class="card"><h2>Results</h2><p>Live ranking, accuracy per question, violations, and CSV export.</p></div>
+  </section>
+
+  <section style="display:flex;flex-direction:column;gap:10px">
+    <h2>Try it in two minutes</h2>
+    <ol>
+      <li>Open the demo and set any faculty password.</li>
+      <li>On <b>Students</b> and <b>Question bank</b>, press the sample buttons, then <b>Save</b>.</li>
+      <li>On <b>Quizzes</b>, give it a title, press <b>Create quiz</b>, then <b>Go live</b>.</li>
+      <li>Press <b>Student view</b>, enter roll number <code>AIML-A-01</code>, and take the quiz.</li>
+      <li>Back in the faculty view, open <b>Results</b>.</li>
+    </ol>
+  </section>
+</main>
+</body>
+</html>

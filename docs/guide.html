@@ -91,6 +91,7 @@ footer{color:var(--muted); font-size:.88rem; border-top:1px solid var(--line); p
       <li><div><h3>Add faculty accounts</h3><p>Press <span class="ui">Accounts</span>. For each colleague, enter a name, username and temporary password, choose <b>Faculty</b> or <b>Administrator</b>, and press <span class="ui">Add faculty account</span>. Give each person their username and password privately.</p></div></li>
       <li><div><h3>Share the page</h3><p>In claude.ai, open the page's <span class="ui">Share</span> menu.</p>
         <ul><li>Faculty: <b>Editor</b> access.</li><li>That group's students only: <b>Contributor</b> access.</li></ul></div></li>
+      <li><div><h3>Know the two links</h3><p>Each group has a <b>faculty link</b> (the page's address) and a <b>student link</b> (the same address ending in <code>#student</code>). The student link always opens the quiz screen for that group, never the faculty login. Log in and copy it from the card at the top of the <span class="ui">Quizzes</span> tab.</p></div></li>
     </ol>
   </section>
 
@@ -113,7 +114,7 @@ footer{color:var(--muted); font-size:.88rem; border-top:1px solid var(--line); p
     <h2>3. Run the quiz</h2>
     <ol class="steps">
       <li><div><h3>Go live</h3><p>When students are ready, press <span class="ui">Go live</span> on the quiz card. Your name is recorded as the person who started it.</p></div></li>
-      <li><div><h3>Send students the group link</h3><p>Students follow the steps in the next section.</p></div></li>
+      <li><div><h3>Send students their group's student link</h3><p>On <span class="ui">Quizzes</span>, press <span class="ui">Copy student link</span> and send it to that group only. Keep the faculty link among faculty. Students follow the steps in the next section.</p></div></li>
       <li><div><h3>Watch progress</h3><p>The <span class="ui">Results</span> tab shows who is answering now, who has submitted, tab switches and other violations. In-progress scores can trail by about 15–20 seconds.</p></div></li>
       <li><div><h3>Close</h3><p>When time is up, press <span class="ui">Close</span>. Anyone still answering is submitted automatically.</p></div></li>
     </ol>
@@ -123,7 +124,7 @@ footer{color:var(--muted); font-size:.88rem; border-top:1px solid var(--line); p
     <span class="who">Students</span>
     <h2>Taking a quiz</h2>
     <ol class="steps">
-      <li><div><h3>Sign in and open the link</h3><p>Sign in to claude.ai with your college account and open the link your teacher sent for your group.</p></div></li>
+      <li><div><h3>Sign in and open the link</h3><p>Sign in to claude.ai with your college account and open the student link your teacher sent for your group (it ends in <code>#student</code>). Use only your own group's link.</p></div></li>
       <li><div><h3>Enter your roll number</h3><p>Type it exactly as it appears on the class list. It's tied to your account after your first quiz.</p></div></li>
       <li><div><h3>Read the rules and start</h3><p>Press <span class="ui">Start quiz</span>, read the rules, then <span class="ui">I agree, start quiz</span>. The timer starts now and keeps running if you close the page.</p></div></li>
       <li><div><h3>Answer</h3><p>Click an option, or press A–D. Use the answer sheet to jump between questions and <span class="ui">Mark for review</span> to come back later. Answers save automatically.</p></div></li>
@@ -150,7 +151,8 @@ footer{color:var(--muted); font-size:.88rem; border-top:1px solid var(--line); p
       <tbody>
         <tr><td>A student sees "no access"</td><td>Give them <b>Contributor</b> access in the page's Share menu.</td></tr>
         <tr><td>A student's answers aren't saving</td><td>Check they have Contributor access, not Viewer, and are signed in to claude.ai.</td></tr>
-        <tr><td>"Roll number isn't on the list"</td><td>Check the roll number matches the uploaded list and that the student opened their own group's link.</td></tr>
+        <tr><td>"Roll number isn't on the list"</td><td>Check the roll number matches the uploaded list and that the student opened their own group's student link.</td></tr>
+        <tr><td>A student sees a faculty login screen</td><td>They opened the faculty link. Send them the student link (ending in <code>#student</code>).</td></tr>
         <tr><td>Wi-Fi dropped or the page reloaded</td><td>Reopen the link and press <span class="ui">Resume</span>. Answers are kept and the timer keeps running.</td></tr>
         <tr><td>Faculty forgot their password</td><td>The administrator opens <span class="ui">Accounts</span> and uses <span class="ui">Reset password</span>.</td></tr>
         <tr><td>Administrator locked out</td><td>The page's owner uses <span class="ui">Reset accounts (owner only)</span> on the login screen. Students, questions and results are kept.</td></tr>

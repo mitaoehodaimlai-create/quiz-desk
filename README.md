@@ -37,11 +37,17 @@ It runs as a [claude.ai Artifact](https://claude.ai): a single HTML page with a 
 
 Each group is a separate Artifact with its own link and its own database, so groups never share load. Each group is sized for 30 students.
 
+Put each group's claude.ai link in a local `groups.json` (it is git-ignored, so the links never reach this public repository):
+
+```json
+{ "A": "https://claude.ai/artifact/...", "B": "https://claude.ai/artifact/...", "C": "https://claude.ai/artifact/..." }
+```
+
 ```bash
 python3 scripts/build_groups.py A B C
 ```
 
-This writes `dist/quiz-group-a.html` and the other groups. Publish each file as its own Artifact, declaring these capabilities:
+This writes `dist/quiz-group-a.html` and the other groups (also git-ignored, since they contain the links). Publish each file as its own Artifact, declaring these capabilities:
 
 ```json
 {
@@ -58,6 +64,8 @@ This writes `dist/quiz-group-a.html` and the other groups. Publish each file as 
 ```
 
 Share each group's Artifact with only that group's students, at **Contributor** access. Viewers can't save answers.
+
+**Two links per group.** Faculty use the group's link as it is. Students get the **student link**, which is the same address followed by `#student`. It always opens the student quiz screen, never the faculty login, and its answers go into that group's results. Logged-in faculty can copy it from the card at the top of the **Quizzes** tab.
 
 ## Data model
 

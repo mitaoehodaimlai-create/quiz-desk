@@ -5,3 +5,6 @@ __pycache__/
 data/
 results/
 *-results.csv
+# Group links and pages built from them stay local (see README).
+groups.json
+dist/

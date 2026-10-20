@@ -8,6 +8,7 @@ and its own database. Usage:
     python3 scripts/build_groups.py D --limit 40 # a larger group
 """
 import argparse
+import json
 import pathlib
 import re
 
@@ -16,9 +17,24 @@ TEMPLATE = ROOT / "src" / "quiz-desk.template.html"
 DIST = ROOT / "dist"
 
 
+LINKS = ROOT / "groups.json"   # {"A": "https://claude.ai/artifact/..."}; local only, not committed
+
+
+def group_url(group: str) -> str:
+    if not LINKS.exists():
+        return ""
+    url = json.loads(LINKS.read_text(encoding="utf-8")).get(group, "")
+    if url and not re.fullmatch(r"https://claude\.ai/(code/)?artifact/[A-Za-z0-9-]+", url):
+        raise SystemExit(f"groups.json: {group!r} is not a claude.ai artifact link: {url!r}")
+    return url
+
+
 def build(group: str, limit: int) -> pathlib.Path:
     html = TEMPLATE.read_text(encoding="utf-8")
-    html = html.replace("name: '__GROUP__', limit: 30", f"name: 'Group {group}', limit: {limit}")
+    url = group_url(group)
+    if not url:
+        print(f"note: no link for group {group} in groups.json; the student-link card is hidden until you add one")
+    html = html.replace("name: '__GROUP__', limit: 30, url: '__URL__'", f"name: 'Group {group}', limit: {limit}, url: '{url}'")
     html = html.replace("<title>Quiz Desk</title>", f"<title>Quiz Desk Group {group}</title>", 1)
     out = DIST / f"quiz-group-{group.lower()}.html"
     out.write_text(html, encoding="utf-8")
@@ -38,7 +54,7 @@ def build_demo() -> pathlib.Path:
     """A standalone copy for GitHub Pages. Without the claude.ai runtime it runs in
     preview mode: everything works, but data lives only in the open tab."""
     html = TEMPLATE.read_text(encoding="utf-8")
-    html = html.replace("name: '__GROUP__', limit: 30", "name: 'Demo', limit: 30")
+    html = html.replace("name: '__GROUP__', limit: 30, url: '__URL__'", "name: 'Demo', limit: 30, url: ''")
     html = html.replace("<title>Quiz Desk</title>", "<title>Quiz Desk Demo</title>", 1)
     out = ROOT / "docs" / "demo.html"
     out.parent.mkdir(exist_ok=True)

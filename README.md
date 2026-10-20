@@ -95,6 +95,8 @@ scripts/build_groups.py       builds group pages from the template
 samples/                      example student list and question bank (made-up data)
 ```
 
-A step-by-step user guide is at https://mitaoehodaimlai-create.github.io/quiz-desk/guide.html.
+A step-by-step user guide is at https://quiz-desk.vercel.app/guide (also on GitHub Pages: https://mitaoehodaimlai-create.github.io/quiz-desk/guide.html).
+
+The website (`docs/`) is deployed on Vercel at https://quiz-desk.vercel.app using `vercel.json`. Like GitHub Pages, the demo there runs in preview mode; real quizzes run on each group's claude.ai page.
 
 Keep real class lists and exported results out of this repository; `.gitignore` excludes `data/`, `results/` and `*-results.csv`.

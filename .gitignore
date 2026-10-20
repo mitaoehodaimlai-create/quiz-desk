@@ -8,3 +8,6 @@ results/
 # Group links and pages built from them stay local (see README).
 groups.json
 dist/
+# Vercel project link (local)
+.vercel
+.env*

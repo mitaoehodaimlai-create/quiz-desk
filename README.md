@@ -86,4 +86,6 @@ scripts/build_groups.py       builds group pages from the template
 samples/                      example student list and question bank (made-up data)
 ```
 
+A step-by-step user guide is at https://mitaoehodaimlai-create.github.io/quiz-desk/guide.html.
+
 Keep real class lists and exported results out of this repository; `.gitignore` excludes `data/`, `results/` and `*-results.csv`.

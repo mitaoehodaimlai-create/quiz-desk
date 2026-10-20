@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quiz Desk User Guide</title>
+<meta name="description" content="Step-by-step guide to Quiz Desk for administrators, faculty and students.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; a sticky role nav; each stage is a numbered sequence because order matters. */
+:root{
+  --paper:#f4f5f8; --sheet:#fff; --ink:#17202d; --muted:#5b6677; --line:#dde1e9;
+  --pen:#2546b8; --pen-soft:#e7ecfb; --pen-ink:#fff; --omr:#c0245e; --omr-soft:#fbe8ef;
+  --warn:#9a5c00; --warn-soft:#fbf0dc; --ok:#1d7a4c; --ok-soft:#e3f4ea;
+  --display:"Bricolage Grotesque","Avenir Next","Segoe UI",system-ui,sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root{
+  --paper:#10141b; --sheet:#171c25; --ink:#e6e9ef; --muted:#9aa3b3; --line:#283040;
+  --pen:#8fa6ff; --pen-soft:#1e2846; --pen-ink:#0e1430; --omr:#f2709f; --omr-soft:#3a1a27;
+  --warn:#e8ac4c; --warn-soft:#33270f; --ok:#5cc892; --ok-soft:#14301f; color-scheme:dark } }
+*{box-sizing:border-box}
+html{scroll-behavior:smooth; scroll-padding-top:72px}
+@media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto} }
+body{margin:0; background:var(--paper); color:var(--ink); font:16px/1.65 var(--body)}
+main{max-width:780px; margin:0 auto; padding:40px 16px 80px; display:flex; flex-direction:column; gap:36px}
+h1,h2,h3{font-family:var(--display); line-height:1.15; margin:0; text-wrap:balance}
+h1{font-size:clamp(2rem,5.5vw,2.8rem)} h2{font-size:1.45rem} h3{font-size:1.05rem}
+p{margin:0} a{color:var(--pen)}
+.muted{color:var(--muted)}
+.label{font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:600}
+.mark{display:grid; grid-template-columns:repeat(3,10px); gap:4px; margin-bottom:14px}
+.mark i{width:10px; height:10px; border-radius:50%; border:2px solid var(--omr)} .mark i.f{background:var(--omr)}
+nav.roles{position:sticky; top:0; z-index:5; background:var(--paper); border-bottom:1px solid var(--line); padding-block:10px}
+nav.roles div{max-width:780px; margin:0 auto; padding-inline:16px; display:flex; gap:6px; flex-wrap:wrap}
+nav.roles a{padding:6px 12px; border-radius:8px; text-decoration:none; color:var(--muted); font-weight:500; font-size:.92rem}
+nav.roles a:hover,nav.roles a:focus-visible{background:var(--pen-soft); color:var(--pen); outline:none}
+section{display:flex; flex-direction:column; gap:16px}
+.who{display:inline-flex; align-items:center; gap:6px; font-size:.78rem; font-weight:600; padding:3px 10px; border-radius:99px; background:var(--pen-soft); color:var(--pen); align-self:flex-start}
+ol.steps{list-style:none; counter-reset:s; margin:0; padding:0; display:flex; flex-direction:column; gap:12px}
+ol.steps > li{counter-increment:s; display:grid; grid-template-columns:34px minmax(0,1fr); gap:12px; background:var(--sheet); border:1px solid var(--line); border-radius:10px; padding:14px 16px}
+ol.steps > li::before{content:counter(s); width:28px; height:28px; border-radius:50%; border:1.5px solid var(--omr); color:var(--omr); display:grid; place-items:center; font-family:var(--mono); font-size:.85rem; font-weight:500}
+ol.steps > li > div{display:flex; flex-direction:column; gap:6px; min-width:0}
+ul{margin:0; padding-left:20px; display:flex; flex-direction:column; gap:4px}
+.ui{font-weight:600; white-space:nowrap}
+code{font-family:var(--mono); font-size:.85em; background:var(--paper); border:1px solid var(--line); border-radius:5px; padding:1px 5px; overflow-wrap:anywhere}
+.note{border-radius:10px; padding:12px 16px; font-size:.95rem; background:var(--warn-soft); color:var(--warn)}
+.note.ok{background:var(--ok-soft); color:var(--ok)}
+.tbl{overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--sheet)}
+table{border-collapse:collapse; width:100%; font-size:.92rem}
+th,td{text-align:left; padding:9px 14px; border-bottom:1px solid var(--line); vertical-align:top}
+th{font-size:.72rem; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); background:var(--paper)}
+tr:last-child td{border-bottom:0}
+.row{display:flex; gap:10px; flex-wrap:wrap}
+.btn{display:inline-flex; align-items:center; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:var(--sheet); color:var(--ink); text-decoration:none; font-weight:600}
+.btn.primary{background:var(--pen); border-color:var(--pen); color:var(--pen-ink)}
+.btn:focus-visible{outline:2px solid var(--pen); outline-offset:2px}
+footer{color:var(--muted); font-size:.88rem; border-top:1px solid var(--line); padding-top:20px}
+</style>
+</head>
+<body>
+<nav class="roles" aria-label="Guide sections"><div>
+  <a href="#setup">1 · Setup</a><a href="#prepare">2 · Prepare</a><a href="#run">3 · Run</a><a href="#students">Students</a><a href="#after">4 · After</a><a href="#help">Help</a>
+</div></nav>
+<main>
+  <header>
+    <div class="mark" aria-hidden="true"><i class="f"></i><i></i><i></i><i></i><i class="f"></i><i></i></div>
+    <div class="label">User guide</div>
+    <h1>How to use Quiz Desk</h1>
+    <p class="muted" style="margin-top:10px;max-width:62ch">From first setup to results, for administrators, faculty and students. Each group of up to 30 students has its own link with its own students, questions and results.</p>
+    <div class="row" style="margin-top:16px"><a class="btn primary" href="demo.html">Practise in the demo</a><a class="btn" href="./">About Quiz Desk</a></div>
+  </header>
+
+  <div class="tbl"><table>
+    <thead><tr><th>Who</th><th>Access to the group's page in claude.ai</th><th>Signs in with</th></tr></thead>
+    <tbody>
+      <tr><td><b>Administrator</b></td><td>Owner or Editor</td><td>Quiz Desk username and password</td></tr>
+      <tr><td><b>Faculty</b></td><td>Editor</td><td>Quiz Desk username and password</td></tr>
+      <tr><td><b>Student</b></td><td>Contributor (Viewer can't save answers)</td><td>claude.ai account and roll number</td></tr>
+    </tbody></table></div>
+
+  <section id="setup">
+    <span class="who">Administrator · once per group</span>
+    <h2>1. Set up the group</h2>
+    <ol class="steps">
+      <li><div><h3>Open your group's link</h3><p>Sign in to claude.ai first, then open the Quiz Desk link for the group.</p></div></li>
+      <li><div><h3>Create the administrator account</h3><p>Enter your name, a username and a password of 8 or more characters, then press <span class="ui">Create account and log in</span>. Do this straight away: whoever opens a new group first becomes its administrator.</p></div></li>
+      <li><div><h3>Add faculty accounts</h3><p>Press <span class="ui">Accounts</span>. For each colleague, enter a name, username and temporary password, choose <b>Faculty</b> or <b>Administrator</b>, and press <span class="ui">Add faculty account</span>. Give each person their username and password privately.</p></div></li>
+      <li><div><h3>Share the page</h3><p>In claude.ai, open the page's <span class="ui">Share</span> menu.</p>
+        <ul><li>Faculty: <b>Editor</b> access.</li><li>That group's students only: <b>Contributor</b> access.</li></ul></div></li>
+    </ol>
+  </section>
+
+  <section id="prepare">
+    <span class="who">Faculty</span>
+    <h2>2. Prepare a quiz</h2>
+    <ol class="steps">
+      <li><div><h3>Log in</h3><p>Open the group link and log in with your username and password. The first time, open <span class="ui">My account</span> and change your temporary password.</p></div></li>
+      <li><div><h3>Upload the student list</h3><p>On <span class="ui">Students</span>, drop an Excel or CSV file whose first row has the headers <code>Roll No, Name, Email, Division</code> (Email and Division are optional). Check the preview and press <span class="ui">Save</span>. Keep each group to 30 students.</p></div></li>
+      <li><div><h3>Upload the question bank</h3><p>On <span class="ui">Question bank</span>, drop a file with the headers <code>Question, A, B, C, D, Answer, Topic, Difficulty, Marks</code>. The answer can be A–D, 1–4 or the option's text. Line breaks inside a question are kept, so code snippets display correctly. Check the preview and press <span class="ui">Save</span>.</p></div></li>
+      <li><div><h3>Create the quiz</h3><p>On <span class="ui">Quizzes</span>:</p>
+        <ul><li>Enter a title, the number of questions, minutes, difficulty and topics, and the divisions it's for.</li>
+          <li>Set proctoring: marks cut per violation, free warnings, and auto-submit after a number of violations.</li>
+          <li>Press <span class="ui">Create quiz</span>. It starts as a <b>Draft</b>, which students can't see.</li></ul></div></li>
+    </ol>
+  </section>
+
+  <section id="run">
+    <span class="who">Faculty · during the exam</span>
+    <h2>3. Run the quiz</h2>
+    <ol class="steps">
+      <li><div><h3>Go live</h3><p>When students are ready, press <span class="ui">Go live</span> on the quiz card. Your name is recorded as the person who started it.</p></div></li>
+      <li><div><h3>Send students the group link</h3><p>Students follow the steps in the next section.</p></div></li>
+      <li><div><h3>Watch progress</h3><p>The <span class="ui">Results</span> tab shows who is answering now, who has submitted, tab switches and other violations. In-progress scores can trail by about 15–20 seconds.</p></div></li>
+      <li><div><h3>Close</h3><p>When time is up, press <span class="ui">Close</span>. Anyone still answering is submitted automatically.</p></div></li>
+    </ol>
+  </section>
+
+  <section id="students">
+    <span class="who">Students</span>
+    <h2>Taking a quiz</h2>
+    <ol class="steps">
+      <li><div><h3>Sign in and open the link</h3><p>Sign in to claude.ai with your college account and open the link your teacher sent for your group.</p></div></li>
+      <li><div><h3>Enter your roll number</h3><p>Type it exactly as it appears on the class list. It's tied to your account after your first quiz.</p></div></li>
+      <li><div><h3>Read the rules and start</h3><p>Press <span class="ui">Start quiz</span>, read the rules, then <span class="ui">I agree, start quiz</span>. The timer starts now and keeps running if you close the page.</p></div></li>
+      <li><div><h3>Answer</h3><p>Click an option, or press A–D. Use the answer sheet to jump between questions and <span class="ui">Mark for review</span> to come back later. Answers save automatically.</p></div></li>
+      <li><div><h3>Submit</h3><p>Press <span class="ui">Submit quiz</span> and confirm. When your teacher releases results, open the quiz again to see your score and the correct answers.</p></div></li>
+    </ol>
+    <p class="note"><b>Stay on the quiz tab.</b> Switching tabs or windows, copying, pasting, right-clicking, bringing in content from other websites, or leaving full screen is recorded and can cost marks. Repeated violations submit your quiz automatically.</p>
+  </section>
+
+  <section id="after">
+    <span class="who">Faculty · after the exam</span>
+    <h2>4. Results and analytics</h2>
+    <ol class="steps">
+      <li><div><h3>Review results</h3><p>On <span class="ui">Results</span>: scores after deductions, tab switches with time away, accuracy for each question with its full text, and who didn't start. Press <span class="ui">Export CSV</span> to download.</p></div></li>
+      <li><div><h3>Find slow and advanced learners</h3><p>On <span class="ui">Learners</span>, choose one quiz or the average of all quizzes, and adjust the thresholds if needed (defaults: slow below 40%, advanced from 75%). Review weak topics for each group and press <span class="ui">Export CSV</span> for NAAC/NBA records. Levels use marks before proctoring deductions.</p></div></li>
+      <li><div><h3>Release results</h3><p>Press <span class="ui">Release results</span> on the quiz card. Students then see their score, any deductions and the correct answers.</p></div></li>
+      <li><div><h3>Check activity and log out</h3><p><span class="ui">Activity</span> shows who did what and when. Press <span class="ui">Log out</span> when you finish.</p></div></li>
+    </ol>
+  </section>
+
+  <section id="help">
+    <h2>Help</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Problem</th><th>What to do</th></tr></thead>
+      <tbody>
+        <tr><td>A student sees "no access"</td><td>Give them <b>Contributor</b> access in the page's Share menu.</td></tr>
+        <tr><td>A student's answers aren't saving</td><td>Check they have Contributor access, not Viewer, and are signed in to claude.ai.</td></tr>
+        <tr><td>"Roll number isn't on the list"</td><td>Check the roll number matches the uploaded list and that the student opened their own group's link.</td></tr>
+        <tr><td>Wi-Fi dropped or the page reloaded</td><td>Reopen the link and press <span class="ui">Resume</span>. Answers are kept and the timer keeps running.</td></tr>
+        <tr><td>Faculty forgot their password</td><td>The administrator opens <span class="ui">Accounts</span> and uses <span class="ui">Reset password</span>.</td></tr>
+        <tr><td>Administrator locked out</td><td>The page's owner uses <span class="ui">Reset accounts (owner only)</span> on the login screen. Students, questions and results are kept.</td></tr>
+      </tbody></table></div>
+    <p class="note ok">Before a real exam, run a short trial with 2–3 students, including one who switches tabs and one who reloads the page.</p>
+  </section>
+
+  <footer>Quiz Desk · <a href="https://github.com/mitaoehodaimlai-create/quiz-desk">source on GitHub</a></footer>
+</main>
+</body>
+</html>

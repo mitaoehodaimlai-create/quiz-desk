@@ -11,6 +11,7 @@ It runs as a [claude.ai Artifact](https://claude.ai): a single HTML page with a 
 - Upload a question bank: `Question, A, B, C, D, Answer, Topic, Difficulty, Marks`. Answer can be A–D, 1–4, or the option text. Students never see the answer key.
 - Build a quiz by drawing N random questions filtered by topic and difficulty, set a time limit, assign it to divisions, and shuffle questions and options per student.
 - Set a quiz live, close it, release results to students, or delete it.
+- Questions are shown in full everywhere (bank, quiz, review, question accuracy), keeping line breaks for code and multi-line questions.
 - Results: live ranking, who is answering now, who hasn't started, accuracy per question, tab switches with time away, proctoring violations, and CSV export.
 - Learner analytics: slow, average and advanced learners, from one quiz or averaged across all quizzes. The thresholds are adjustable (defaults: slow below 40%, advanced from 75%). Each student's weakest and strongest topic, topic accuracy for each level, students not yet assessed, a suggested action for each level, and a CSV export. Levels use marks before proctoring deductions.
 
@@ -23,12 +24,14 @@ It runs as a [claude.ai Artifact](https://claude.ai): a single HTML page with a 
 - Faculty set the marks cut per violation, the number of free warnings, and auto-submit after N violations.
 - A browser page cannot detect a second device or OS-level screenshots, so supervise exams that count.
 
-**Faculty login**
-- The faculty side asks for a password before it shows students, questions or results. The first faculty member to open a group sets it, and each group has its own password.
-- An unlock lasts 8 hours in that browser tab. **Lock** ends it, and changing the password ends every open unlock.
-- After 5 wrong attempts there is a wait that doubles with each further mistake. The artifact's owner can reset a forgotten password; students, questions and results are kept.
-- Only a salted PBKDF2-SHA-256 hash is stored, in `staff/auth`, which only editors can read. No password is in this repository.
-- The password is a second lock on top of claude.ai access. What students can read or write is enforced by the database rules below, whether or not the faculty side is locked.
+**Faculty accounts**
+- Each faculty member logs in with their own username and password to start the quiz platform. Until they do, nothing on the faculty side is shown: no uploads, quizzes, results or analytics.
+- The first person to open a group creates the administrator account. The administrator adds faculty or other administrators, resets passwords, and disables or removes accounts. Faculty can change their own password under **My account**.
+- A login lasts 8 hours in that browser tab. **Log out** ends it, and resetting, disabling or removing an account ends that person's sessions.
+- After 5 wrong attempts there is a wait that doubles with each further mistake. If the administrator is locked out, the artifact's owner can reset all accounts; students, questions, quizzes, results and the activity log are kept.
+- **Activity** tab: every login, upload, quiz creation, start, close, result release, deletion, export and account change, with the faculty member's name and time. Quiz cards show who created, started and closed each quiz.
+- Only salted PBKDF2-SHA-256 hashes are stored, in `staff/faculty`, which only editors can read. No password is in this repository.
+- Accounts sit on top of claude.ai access, so each faculty member also needs Editor access to the group's page. What students can read or write is enforced by the database rules below.
 
 ## Groups: one link per group
 
@@ -60,7 +63,8 @@ Share each group's Artifact with only that group's students, at **Contributor** 
 
 | Path | Who can read | Contents |
 |---|---|---|
-| `staff/auth` | Faculty | Faculty password hash, salt and iteration count |
+| `staff/faculty` | Faculty | Faculty accounts: name, username, role, status, password hash and salt |
+| `staff/log/entries/<id>` | Faculty | Activity log: time, faculty member, action, details |
 | `staff/roster` | Faculty | Student list |
 | `staff/bank` | Faculty | Question bank with answers |
 | `staff/key_<quizId>` | Faculty | Answer key for one quiz |

@@ -86,10 +86,39 @@ Share each group's Artifact with only that group's students, at **Contributor** 
 - Answers are kept on the device and synced every 15–20 seconds, with a random offset per student. Start, submit and leaving the tab sync immediately.
 - Faculty watch student attempts only on the Quizzes and Results tabs, and the screen redraws at most every 2 seconds.
 
+## Vercel + Supabase version (9 links)
+
+`docs/app.html` is a standalone version that runs on Vercel with a Supabase database. No claude.ai account is needed.
+
+| Link | Who | What |
+|---|---|---|
+| `/s/A`, `/s/B`, `/s/C` | Students | Roll number + PIN sign-in, then the quiz |
+| `/f/A`, `/f/B`, `/f/C` | Faculty | Students and PINs, shared question bank, quizzes, results, learners, activity |
+| `/r/A`, `/r/B`, `/r/C` | Faculty | Results and learner analytics only |
+
+- **Faculty** sign in with email and password through Supabase Auth. The first person becomes the administrator; later sign-ups wait for approval under **Accounts**.
+- **Students** never get a Supabase account. They sign in with roll number + PIN through `student_*` database functions that return a 12-hour session token. Five wrong PINs lock that roll number for 2 minutes.
+- **Answer keys stay on the server.** Questions are sent to students without answers. Answers sent after the deadline (plus 20 seconds) are refused and the attempt is submitted; closing a quiz submits everyone still answering.
+- **PINs** are stored as bcrypt hashes and shown to faculty once, with an Excel export of the PIN slips.
+- **Shared question bank**; quizzes, students and results are per group.
+- Tested locally with 80 students in one group signing in, starting, saving 3 times and submitting at the same moment: 0 errors, median 0.3 s per sign-in and 0.07 s per save.
+
+### Setting up
+1. Create a Supabase project. Run `supabase/migrations/20261020000000_quiz_desk.sql` in its SQL editor, or use `npx supabase link` and `npx supabase db push`.
+2. In Supabase **Authentication → URL configuration**, set the Site URL to `https://quiz-desk.vercel.app` and add `https://quiz-desk.vercel.app/f/*` and `https://quiz-desk.vercel.app/r/*` as redirect URLs.
+3. Put the Project URL and anon public key in `docs/config.js`, then deploy to Vercel. `vercel.json` routes `/s/:group`, `/f/:group` and `/r/:group` to `app.html`.
+4. Open `/f/A` and create the first account; it becomes the administrator.
+5. Supabase's built-in email sender allows only a few emails per hour, which limits sign-up confirmation and password-reset emails. For real use, add your own SMTP server under **Authentication → Emails**, or turn off email confirmation.
+
+### Testing locally
+`npx supabase start` (needs Docker) runs the database on this computer. Put `http://127.0.0.1:54321` and the local anon key in `docs/config.js` (don't commit them), serve `docs/`, and open `app.html#/f/A` or `app.html#/s/A`.
+
 ## Layout
 
 ```
-src/quiz-desk.template.html   the page (group name is a placeholder)
+src/quiz-desk.template.html   the claude.ai version of the page (group name is a placeholder)
+docs/app.html, docs/app.css   the Vercel + Supabase version (9 links)
+supabase/                     database schema, security rules and student functions
 dist/quiz-group-*.html        built group pages
 scripts/build_groups.py       builds group pages from the template
 samples/                      example student list and question bank (made-up data)

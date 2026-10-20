@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Quiz Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/app.css">
+<style>
+body{margin:0}
+.linkrow{display:grid; grid-template-columns:110px minmax(0,1fr) auto; gap:8px; align-items:center}
+@media (max-width:560px){ .linkrow{grid-template-columns:minmax(0,1fr) auto} .linkrow > span{grid-column:1 / -1} }
+.pinsheet{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px}
+.pinslip{border:1px dashed var(--line-strong); border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:2px}
+.pinslip b{font-family:var(--mono); font-size:1.3rem; letter-spacing:.12em}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/config.js"></script>
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><i class="f"></i><i></i><i></i><i></i><i class="f"></i><i></i></span>Quiz Desk <span class="role" id="groupChip" style="font-family:var(--body)" hidden></span></div>
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+  <div class="bar-end" id="barEnd"></div>
+</div></header>
+<main id="view"><div class="empty"><h3>Opening Quiz Desk…</h3></div></main>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+/* ======================================================================
+   Quiz Desk on Vercel + Supabase. One page serves three links per group:
+     /s/<group>  students: roll number + PIN, then the quiz
+     /f/<group>  faculty: students, shared question bank, quizzes, results
+     /r/<group>  faculty: results and analytics only
+   ====================================================================== */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const clone = o => JSON.parse(JSON.stringify(o));
+const LETTERS = ['A','B','C','D','E','F'];
+const ms = t => t ? new Date(t).getTime() : null;
+const fmtTime = m => { const s = Math.max(0, Math.round(m / 1000)); const h = Math.floor(s / 3600), mi = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(mi).padStart(2, '0') : mi) + ':' + String(x).padStart(2, '0'); };
+const fmtDate = t => t ? new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const pct = (a, b) => b ? Math.round(a / b * 1000) / 10 : 0;
+function store(k, v){ try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { return null; } }
+function sstore(k, v){ try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch { return null; } }
+let toastT;
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 3600); }
+function hashStr(s){ let h = 2166136261; for (const c of s){ h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rng(seed){ return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function shuffled(arr, rand){ const a = arr.slice(); for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const errMsg = e => e?.hint || e?.message || String(e || 'Something went wrong.');
+
+/* ---------- route ---------- */
+function parseRoute(){
+  const m = /^\/(s|f|r)(?:\/([A-Za-z0-9]{1,12}))?\/?$/.exec(location.pathname) || /^#\/?(s|f|r)(?:\/([A-Za-z0-9]{1,12}))?$/.exec(location.hash);
+  return m ? { mode: m[1], group: (m[2] || '').toUpperCase() } : { mode: 'home', group: '' };
+}
+const ROUTE = parseRoute();
+const linkFor = (mode, g) => `${location.origin}/${mode}/${g}`;
+
+/* ---------- Supabase ---------- */
+const CFG = window.QD_CONFIG || {};
+const sb = (window.supabase && CFG.supabaseUrl) ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, { auth: { persistSession: true, storageKey: 'qd-faculty' } }) : null;
+async function rpc(name, args){ const { data, error } = await sb.rpc(name, args); if (error) throw error; return data; }
+async function q(promise){ const { data, error } = await promise; if (error) throw error; return data; }
+
+/* ---------- shared: upload parsing ---------- */
+function parseCSV(text){
+  const lines = text.replace(/\r\n?/g, '\n'), first = lines.split('\n')[0] || '';
+  const delim = (first.split('\t').length > first.split(',').length) ? '\t' : ',';
+  const rows = []; let row = [], cell = '', inq = false;
+  for (let i = 0; i < lines.length; i++){
+    const c = lines[i];
+    if (inq){ if (c === '"'){ if (lines[i + 1] === '"'){ cell += '"'; i++; } else inq = false; } else cell += c; }
+    else if (c === '"') inq = true;
+    else if (c === delim){ row.push(cell); cell = ''; }
+    else if (c === '\n'){ row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += c;
+  }
+  if (cell || row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(x => String(x).trim()));
+}
+async function fileRows(file){
+  if (window.XLSX){
+    const wb = XLSX.read(await file.arrayBuffer());
+    return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '', raw: false }).filter(r => r.some(x => String(x).trim()));
+  }
+  if (/\.(csv|txt|tsv)$/i.test(file.name)) return parseCSV(await file.text());
+  throw new Error('The Excel reader did not load. Save the sheet as CSV and upload that instead.');
+}
+const findCol = (heads, aliases) => heads.findIndex(h => aliases.includes(h));
+const STUDENT_COLS = {
+  roll: ['roll','rollno','rollnumber','prn','prnno','prnnumber','enrollment','enrollmentno','enrolmentno','studentid','regno','registrationno','usn','id'],
+  name: ['name','studentname','fullname','student','nameofstudent'],
+  email: ['email','emailid','mail','emailaddress','mailid'],
+  division: ['division','div','batch','class','section','branch','group'],
+};
+function parseStudents(rows){
+  const heads = (rows[0] || []).map(norm), issues = [];
+  const ix = Object.fromEntries(Object.entries(STUDENT_COLS).map(([k, a]) => [k, findCol(heads, a)]));
+  if (ix.roll < 0) return { error: 'No roll number column found. Name the header "Roll No" or "PRN".' };
+  if (ix.name < 0) issues.push('No name column found; students will be listed by roll number only.');
+  const out = [], seen = new Set();
+  rows.slice(1).forEach((r, i) => {
+    const roll = String(r[ix.roll] ?? '').trim().toUpperCase();
+    if (!roll){ issues.push(`Row ${i + 2}: missing roll number, skipped.`); return; }
+    if (seen.has(roll)){ issues.push(`Row ${i + 2}: roll ${roll} repeats an earlier row, skipped.`); return; }
+    seen.add(roll);
+    out.push({ roll, name: ix.name >= 0 ? String(r[ix.name]).trim() : '', email: ix.email >= 0 ? String(r[ix.email]).trim() : '', division: ix.division >= 0 ? String(r[ix.division]).trim().toUpperCase() : '' });
+  });
+  return { rows: out, issues };
+}
+const Q_COLS = {
+  text: ['question','questiontext','q','text','stem','questions'],
+  answer: ['answer','correct','correctanswer','key','ans','correctoption','answerkey','rightanswer'],
+  topic: ['topic','unit','chapter','module','subject','co','courseoutcome'],
+  diff: ['difficulty','level','difficultylevel','diff'],
+  marks: ['marks','mark','points','score','weight','weightage'],
+};
+const OPT_COLS = LETTERS.map((L, i) => { const l = L.toLowerCase(), n = i + 1; return [l, 'option' + l, 'opt' + l, 'choice' + l, 'option' + n, 'opt' + n, 'choice' + n, 'o' + n]; });
+function normDiff(v){ const s = norm(v); if (!s) return 'medium'; if (/^(e|1|low)/.test(s)) return 'easy'; if (/^(h|3|high|diff)/.test(s)) return 'hard'; return 'medium'; }
+function parseQuestions(rows){
+  const heads = (rows[0] || []).map(norm), issues = [];
+  const ix = Object.fromEntries(Object.entries(Q_COLS).map(([k, a]) => [k, findCol(heads, a)]));
+  const optIx = OPT_COLS.map(a => findCol(heads, a)).filter(i => i >= 0);
+  if (ix.text < 0) return { error: 'No question column found. Name the header "Question".' };
+  if (optIx.length < 2) return { error: 'Need at least two option columns, named A, B, C, D (or Option A … Option D).' };
+  if (ix.answer < 0) return { error: 'No answer column found. Name the header "Answer" and put A–D (or the option text) in it.' };
+  const out = [];
+  rows.slice(1).forEach((r, i) => {
+    const text = String(r[ix.text] ?? '').trim();
+    if (!text){ issues.push(`Row ${i + 2}: empty question, skipped.`); return; }
+    const options = optIx.map(j => String(r[j] ?? '').trim()).filter(Boolean);
+    if (options.length < 2){ issues.push(`Row ${i + 2}: fewer than two options, skipped.`); return; }
+    const raw = String(r[ix.answer] ?? '').trim();
+    let answer;
+    if (/^(option\s*)?[a-f]$/i.test(raw)) answer = LETTERS.indexOf(raw.slice(-1).toUpperCase());
+    else if (/^\d$/.test(raw)) answer = +raw - 1;
+    else answer = options.findIndex(o => norm(o) === norm(raw));
+    if (answer < 0 || answer >= options.length){ issues.push(`Row ${i + 2}: answer "${raw || 'blank'}" doesn't match an option, skipped.`); return; }
+    const marks = ix.marks >= 0 ? parseFloat(r[ix.marks]) : NaN;
+    out.push({ text, options, answer, topic: ix.topic >= 0 ? String(r[ix.topic]).trim() || 'General' : 'General', difficulty: ix.diff >= 0 ? normDiff(r[ix.diff]) : 'medium', marks: marks > 0 ? marks : 1 });
+  });
+  return { rows: out, issues };
+}
+
+/* ---------- shared: proctoring rules ---------- */
+const PROCTOR_DEFAULT = { penalty: 1, free: 1, maxV: 5 };
+const VIOL_LABEL = { tab: 'Left the quiz tab or window', copy: 'Tried to copy text', cut: 'Tried to cut text', paste: 'Tried to paste text', menu: 'Opened the right-click menu', drop: 'Dragged in content from elsewhere', fullscreen: 'Left full screen', screenshot: 'Pressed Print Screen' };
+const proctorOf = quiz => ({ ...PROCTOR_DEFAULT, ...(quiz.proctor || {}) });
+function penaltyOf(quiz, violations){ const p = proctorOf(quiz), v = violations.length; return { v, ded: Math.max(0, v - p.free) * p.penalty, p }; }
+function rulesText(quiz){
+  const p = proctorOf(quiz);
+  return `Switching tabs or windows, copying, pasting, right-clicking, or bringing in content from other websites is recorded as a violation. ${p.free ? `The first ${p.free === 1 ? 'one is a warning' : p.free + ' are warnings'}; after that, ` : 'Each one '}${p.penalty ? `costs ${p.penalty} mark${p.penalty == 1 ? '' : 's'} each` : 'is reported to your teacher'}.${p.maxV ? ` After ${p.maxV} violations the quiz is submitted automatically.` : ''}`;
+}
+
+/* ======================================================================
+   STUDENT  (/s/<group>)
+   ====================================================================== */
+const ST = { group: ROUTE.group, session: null, quizzes: [], take: null, review: null, preStart: null, busy: false };
+const tokenKey = () => 'qd.student.' + ST.group;
+
+async function studentBoot(){
+  try { ST.session = JSON.parse(sstore(tokenKey()) || 'null'); } catch {}
+  if (ST.session) await loadStudentQuizzes();
+  renderStudent();
+}
+async function studentCall(name, args){
+  try { return await rpc(name, { p_token: ST.session?.token, ...args }); }
+  catch (e){
+    if (/SESSION_EXPIRED/.test(e.message || '')){ ST.session = null; sstore(tokenKey(), null); ST.take = null; renderStudent(); toast('Your sign-in expired. Enter your roll number and PIN again.'); }
+    throw e;
+  }
+}
+async function loadStudentQuizzes(){ try { ST.quizzes = await studentCall('student_quizzes', {}); } catch (e){ if (ST.session) toast(errMsg(e)); } }
+function studentView(){
+  const s = ST.session;
+  if (!s) return `<section class="panel" style="max-width:460px;margin:0 auto;width:100%"><div><div class="label">Student sign-in · Group ${esc(ST.group)}</div><h2>Enter your roll number and PIN</h2></div>
+    <p class="muted">Use the roll number on your class list and the PIN your teacher gave you.</p>
+    <label class="field"><span>Roll number</span><input type="text" id="s-roll" class="mono" autocomplete="username" autocapitalize="characters" placeholder="e.g. AIML-A-01"></label>
+    <label class="field"><span>PIN</span><input type="password" id="s-pin" class="mono" inputmode="numeric" autocomplete="current-password" maxlength="8"></label>
+    ${ST.loginErr ? `<div class="issues" role="alert">${esc(ST.loginErr)}</div>` : ''}
+    <div class="row"><button class="btn primary" data-act="s-login">Sign in</button></div></section>`;
+  if (ST.take) return examView();
+  if (ST.review) return reviewView();
+  const pre = ST.preStart && ST.quizzes.find(x => x.id === ST.preStart);
+  if (pre) return `<section class="panel" style="max-width:640px;margin:0 auto;width:100%"><div><div class="label">Before you start · <span class="mono">${esc(s.roll)}</span></div><h2>${esc(pre.title)}</h2></div>
+    <div class="qz-facts"><span><b>${pre.n}</b> questions</span><span><b>${pre.total_marks}</b> marks</span><span><b>${pre.duration_min}</b> min</span></div>
+    <div class="confirm"><b>This quiz is proctored</b>
+      <ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+        <li>Stay on this tab. Switching tabs, opening another app or website, or minimising the window is recorded.</li>
+        <li>Copying, cutting, pasting, right-clicking and dragging in text or files from other sites are blocked and recorded.</li>
+        <li>The quiz opens in full screen where your browser allows it. Leaving full screen is recorded.</li>
+        <li>${esc(rulesText(pre))}</li><li>Your teacher sees every violation with its time.</li></ul></div>
+    <p class="small muted">The timer starts when you press Start and keeps running if you close the page.</p>
+    <div class="row"><button class="btn primary" data-act="s-start-go" data-id="${pre.id}">I agree, start quiz</button><button class="btn ghost" data-act="s-pre-cancel">Back</button></div></section>`;
+  return `<section class="panel"><div class="panel-head"><div><div class="label">Signed in as <span class="mono">${esc(s.roll)}</span>${s.name ? ' · ' + esc(s.name) : ''}</div><h2>Your quizzes</h2></div>
+      <div class="row"><button class="btn sm" data-act="s-refresh">Refresh</button><button class="btn sm ghost" data-act="s-logout">Sign out</button></div></div>
+    ${ST.quizzes.length ? `<div class="quizzes">${ST.quizzes.map(qz => {
+      const a = qz.attempt; let state, btn;
+      if (a?.submitted_at){ state = qz.released ? '<span class="pill info">Result out</span>' : '<span class="pill live">Submitted</span>'; btn = qz.released ? `<button class="btn sm primary" data-act="s-review" data-id="${qz.id}">See result</button>` : '<span class="small muted">Your teacher will release results.</span>'; }
+      else if (qz.status !== 'live'){ state = '<span class="pill closed">Closed</span>'; btn = '<span class="small muted">This quiz is closed.</span>'; }
+      else if (a){ state = '<span class="pill info">In progress</span>'; btn = `<button class="btn sm primary" data-act="s-start-go" data-id="${qz.id}">Resume</button>`; }
+      else { state = '<span class="pill live">Open</span>'; btn = `<button class="btn sm primary" data-act="s-start" data-id="${qz.id}">Start quiz</button>`; }
+      return `<article class="qz"><div>${state}</div><h3>${esc(qz.title)}</h3>
+        <div class="qz-facts"><span><b>${qz.n}</b> questions</span><span><b>${qz.total_marks}</b> marks</span><span><b>${qz.duration_min}</b> min</span></div>
+        ${!a ? '<p class="small muted">Proctored: tab switching, copy and paste cost marks.</p>' : ''}<div class="qz-actions">${btn}</div></article>`; }).join('')}</div>`
+      : `<div class="empty"><h3>No open quizzes for ${esc(s.roll)}</h3><p>Quizzes appear here when your teacher sets them live. Press Refresh to check again.</p></div>`}</section>`;
+}
+
+/* exam: answers are kept on the device and synced every 15–20 s (random per student) */
+const SYNC_MS = 15000 + Math.floor(Math.random() * 5000);
+let pendingSync = false, lastSync = 0, syncing = null, pendingViol = [], clockOffset = 0, timerI;
+function attemptKey(){ return 'qd.att.' + ST.take?.attemptId; }
+function backupLocal(){ const t = ST.take; if (t) store(attemptKey(), JSON.stringify({ answers: t.answers, marked: t.marked, at: Date.now() })); }
+async function startAttempt(id){
+  try {
+    const r = await studentCall('start_attempt', { p_quiz: id });
+    const quiz = r.quiz, rand = rng(hashStr(r.attempt_id));
+    const ids = quiz.questions.map(x => x.id), order = quiz.shuffle ? shuffled(ids, rand) : ids, opt = {};
+    quiz.questions.forEach(x => { const idx = x.options.map((_, i) => i); opt[x.id] = quiz.shuffle ? shuffled(idx, rand) : idx; });
+    clockOffset = ms(r.server_now) - Date.now();
+    ST.take = { quiz, attemptId: r.attempt_id, order, opt, cur: 0, confirm: false, warn: null, deadline: ms(r.deadline),
+      answers: r.answers || {}, marked: r.marked || {}, violations: r.violations || [] };
+    try { const loc = JSON.parse(store(attemptKey()) || 'null'); if (loc && !r.submitted_at){ ST.take.answers = { ...ST.take.answers, ...loc.answers }; ST.take.marked = { ...ST.take.marked, ...loc.marked }; pendingSync = true; } } catch {}
+    if (r.submitted_at) return finishExam(r);
+    timerI = setInterval(tick, 1000); tick(); renderStudent();
+  } catch (e){ toast(errMsg(e)); await loadStudentQuizzes(); renderStudent(); }
+}
+const now = () => Date.now() + clockOffset;
+function tick(){
+  if (!ST.take) return clearInterval(timerI);
+  const left = ST.take.deadline - now(), el = $('#timer');
+  if (el){ el.textContent = fmtTime(left); el.classList.toggle('low', left < 60000); }
+  if (left <= 0) syncNow(true);
+  else if (pendingSync && Date.now() - lastSync >= SYNC_MS) syncNow(false);
+}
+function touch(){ pendingSync = true; backupLocal(); }
+async function syncNow(submit){
+  if (!ST.take) return;
+  if (syncing){ await syncing; if (!submit && !pendingSync) return; }
+  const t = ST.take, viol = pendingViol; pendingViol = []; pendingSync = false; lastSync = Date.now();
+  syncing = (async () => {
+    try {
+      const r = await studentCall('save_attempt', { p_quiz: t.quiz.id, p_answers: t.answers, p_marked: t.marked, p_violations: viol, p_submit: !!submit });
+      clockOffset = ms(r.server_now) - Date.now();
+      if (ST.take){ ST.take.violations = r.violations || ST.take.violations; ST.take.deadline = ms(r.deadline); }
+      if (r.submitted_at) finishExam(r);
+    } catch (e){
+      pendingViol = viol.concat(pendingViol); pendingSync = true;
+      if (!/SESSION_EXPIRED/.test(e.message || '')) toast('Answers are saved on this device and will sync when the connection returns.');
+    } finally { syncing = null; }
+  })();
+  return syncing;
+}
+function finishExam(r){
+  clearInterval(timerI);
+  const auto = r.auto, closed = r.quiz_status && r.quiz_status !== 'live';
+  if (ST.take) store(attemptKey(), null);
+  ST.take = null;
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch {}
+  toast(!auto ? 'Submitted. Your answers are recorded.' : closed ? 'Your teacher closed this quiz, so your answers were submitted.' : 'Your quiz was submitted automatically.');
+  loadStudentQuizzes().then(renderStudent);
+}
+function examView(){
+  const t = ST.take, quiz = t.quiz, qid = t.order[t.cur], item = quiz.questions.find(x => x.id === qid);
+  const answered = t.order.filter(id => t.answers[id] !== undefined).length, unanswered = t.order.length - answered;
+  const pen = penaltyOf(quiz, t.violations), tabs = t.violations.filter(v => v.t === 'tab').length, w = t.warn;
+  const warnBar = w ? `<div class="warnbar" role="alert"><div><b>Violation recorded: ${esc(VIOL_LABEL[w] || w)}.</b>
+      ${pen.v <= pen.p.free ? `This was warning ${pen.v} of ${pen.p.free}. The next one costs marks.` : `${pen.ded} mark${pen.ded == 1 ? '' : 's'} deducted so far.`}
+      ${pen.p.maxV ? `The quiz is submitted automatically at ${pen.p.maxV} violations (you have ${pen.v}).` : ''}</div>
+      <button class="btn sm" data-act="s-warn-ok">Back to quiz</button></div>` : '';
+  return `${warnBar}<div class="exam-head"><div><div class="label">${esc(ST.session.roll)} · ${quiz.total_marks} marks</div><h2>${esc(quiz.title)}</h2></div>
+      <div class="row"><span class="pill ${tabs ? 'bad' : 'draft'}">Tab switches: ${tabs}</span><span class="pill ${pen.v ? 'bad' : 'draft'}" title="${esc(rulesText(quiz))}">${pen.v} violation${pen.v === 1 ? '' : 's'}${pen.ded ? ` · −${pen.ded}` : ''}</span><span class="small muted">${answered}/${t.order.length} answered</span><span class="timer" id="timer" role="timer">${fmtTime(t.deadline - now())}</span></div></div>
+    <div class="exam">
+      <section class="panel">
+        <div class="qmeta"><span class="mono">Question ${t.cur + 1} of ${t.order.length}</span><span>${item.marks} mark${item.marks == 1 ? '' : 's'}</span><span>${esc(item.topic)}</span></div>
+        <p class="qtext">${esc(item.text)}</p>
+        <div class="choices" role="group" aria-label="Options">${t.opt[qid].map((orig, i) => `<button class="choice" data-act="s-pick" data-v="${orig}" aria-pressed="${t.answers[qid] === orig}"><span class="bub">${LETTERS[i]}</span><span>${esc(item.options[orig])}</span></button>`).join('')}</div>
+        <div class="row" style="justify-content:space-between">
+          <div class="row"><button class="btn" data-act="s-prev" ${t.cur ? '' : 'disabled'}>Previous</button><button class="btn" data-act="s-next" ${t.cur < t.order.length - 1 ? '' : 'disabled'}>Next</button></div>
+          <div class="row"><button class="btn ghost sm" data-act="s-mark">${t.marked[qid] ? 'Unmark review' : 'Mark for review'}</button>${t.answers[qid] !== undefined ? '<button class="btn ghost sm" data-act="s-clear">Clear answer</button>' : ''}</div>
+        </div>
+        <p class="small muted">Keys: A–${LETTERS[item.options.length - 1]} to choose, ← → to move.</p>
+      </section>
+      <aside class="panel"><div class="label">Answer sheet</div>
+        <div class="palette">${t.order.map((id, i) => `<button class="pal ${t.answers[id] !== undefined ? 'ans' : ''} ${i === t.cur ? 'cur' : ''} ${t.marked[id] ? 'mark' : ''}" data-act="s-goto" data-i="${i}" aria-label="Question ${i + 1}">${i + 1}</button>`).join('')}</div>
+        <div class="legend"><span><i style="background:var(--omr);border-color:var(--omr)"></i>Answered</span><span><i></i>Not answered</span><span><i style="background:var(--warn);border-color:var(--warn);border-radius:50%"></i>For review</span></div>
+        ${t.confirm ? `<div class="confirm"><b>Submit now?</b><p class="small">${unanswered ? `${unanswered} question${unanswered === 1 ? ' is' : 's are'} unanswered.` : 'All questions answered.'} You can't change answers after submitting.</p>
+          <div class="row"><button class="btn primary" data-act="s-submit-yes">Submit</button><button class="btn ghost" data-act="s-submit-no">Keep working</button></div></div>`
+          : `<button class="btn primary" data-act="s-submit-ask">Submit quiz</button>`}
+      </aside></div>`;
+}
+function reviewView(){
+  const r = ST.review, quiz = r.quiz, key = Object.fromEntries(quiz.questions.map(x => [x.id, x.answer]));
+  let raw = 0, correct = 0;
+  quiz.questions.forEach(x => { if (r.answers[x.id] === key[x.id]){ raw += +x.marks || 1; correct++; } });
+  const pen = penaltyOf(quiz, r.violations || []), score = Math.max(0, raw - pen.ded);
+  return `<section class="panel"><div class="panel-head"><div><div class="label">Result · <span class="mono">${esc(ST.session.roll)}</span></div><h2>${esc(quiz.title)}</h2></div><button class="btn sm" data-act="s-back">All quizzes</button></div>
+    <div class="row" style="gap:24px;align-items:flex-end"><div><div class="scorebig">${score}<span class="muted" style="font-size:1.4rem"> / ${quiz.total_marks}</span></div>
+      <div class="muted">${pct(score, quiz.total_marks)}% · ${correct} of ${quiz.questions.length} correct</div>
+      ${pen.v ? `<div class="small" style="color:var(--bad)">${raw} marks earned − ${pen.ded} for ${pen.v} proctoring violation${pen.v === 1 ? '' : 's'}${pen.ded ? '' : ' (within free warnings)'}</div>` : ''}</div>
+      <div class="small muted">Submitted ${fmtDate(r.submitted_at)} · took ${fmtTime(ms(r.submitted_at) - ms(r.started_at))}</div></div></section>
+    <section class="panel"><h3>Answer review</h3><div class="review">${quiz.questions.map((x, i) => { const mine = r.answers[x.id], ok = mine === key[x.id];
+      return `<article class="qcard ${ok ? 'right' : 'wrong'}"><p class="qtxt"><b class="mono muted">${i + 1}.</b> ${esc(x.text)}</p>
+        <div class="opts">${x.options.map((o, j) => { const isKey = j === key[x.id], isMine = j === mine; return `<div class="${isKey ? 'right' : ''}"><span class="bub sm ${isKey ? 'ok fill' : isMine ? 'no fill' : ''}">${LETTERS[j]}</span><span class="qtxt">${esc(o)}${isMine ? ' <span class="small muted">(your answer)</span>' : ''}</span></div>`; }).join('')}</div>
+        <div class="qmeta"><span>${ok ? `+${x.marks}` : mine === undefined ? 'Not answered' : '0'}</span><span>${esc(x.topic)}</span></div></article>`; }).join('')}</div></section>`;
+}
+function renderStudent(){
+  $('#groupChip').hidden = false; $('#groupChip').textContent = 'Group ' + ST.group;
+  $('#tabs').innerHTML = '';
+  $('#barEnd').innerHTML = `${ST.session ? `<span class="mono small">${esc(ST.session.roll)}</span>` : ''}<span class="role">Student</span>`;
+  $('#view').innerHTML = studentView();
+  const pin = $('#s-pin'); if (pin) pin.onkeydown = e => { if (e.key === 'Enter') studentAct('s-login', $('[data-act="s-login"]')); };
+  if (!ST.session && !document.activeElement?.matches?.('input')) $('#s-roll')?.focus();
+}
+async function studentAct(a, el){
+  const id = el?.dataset.id, t = ST.take;
+  switch (a){
+    case 's-login': {
+      const roll = $('#s-roll').value.trim(), pin = $('#s-pin').value.trim();
+      if (!roll || !pin){ ST.loginErr = 'Enter your roll number and PIN.'; return renderStudent(); }
+      el.disabled = true;
+      try { const r = await rpc('student_login', { p_group: ST.group, p_roll: roll, p_pin: pin }); if (r.error){ ST.loginErr = r.hint; return renderStudent(); } ST.session = r; sstore(tokenKey(), JSON.stringify(ST.session)); ST.loginErr = ''; await loadStudentQuizzes(); }
+      catch (e){ ST.loginErr = errMsg(e); }
+      renderStudent(); break; }
+    case 's-logout': try { await rpc('student_logout', { p_token: ST.session.token }); } catch {} ST.session = null; sstore(tokenKey(), null); renderStudent(); break;
+    case 's-refresh': await loadStudentQuizzes(); renderStudent(); toast('Up to date.'); break;
+    case 's-start': ST.preStart = id; renderStudent(); break;
+    case 's-pre-cancel': ST.preStart = null; renderStudent(); break;
+    case 's-start-go': ST.preStart = null; enterFullscreen(); el.disabled = true; await startAttempt(id); break;
+    case 's-warn-ok': if (t){ t.warn = null; enterFullscreen(); renderStudent(); } break;
+    case 's-review': try { ST.review = await studentCall('student_result', { p_quiz: id }); } catch (e){ return toast(errMsg(e)); } renderStudent(); break;
+    case 's-back': ST.review = null; renderStudent(); break;
+    case 's-pick': t.answers[t.order[t.cur]] = +el.dataset.v; touch(); renderStudent(); break;
+    case 's-clear': delete t.answers[t.order[t.cur]]; touch(); renderStudent(); break;
+    case 's-mark': { const k = t.order[t.cur]; t.marked[k] = !t.marked[k]; if (!t.marked[k]) delete t.marked[k]; touch(); renderStudent(); break; }
+    case 's-prev': t.cur = Math.max(0, t.cur - 1); renderStudent(); break;
+    case 's-next': t.cur = Math.min(t.order.length - 1, t.cur + 1); renderStudent(); break;
+    case 's-goto': t.cur = +el.dataset.i; renderStudent(); break;
+    case 's-submit-ask': t.confirm = true; renderStudent(); break;
+    case 's-submit-no': t.confirm = false; renderStudent(); break;
+    case 's-submit-yes': el.disabled = true; await syncNow(true); if (ST.take){ el.disabled = false; toast('Couldn\'t reach the server. Your answers are safe on this device; press Submit again.'); } break;
+  }
+}
+/* proctoring engine: active only during an exam */
+const lastViol = {};
+function violation(type, extra){
+  const t = ST.take; if (!t) return;
+  const n = Date.now(); if (n - (lastViol[type] || 0) < 3000) return; lastViol[type] = n;
+  const v = { t: type, at: n, ...(extra || {}) };
+  t.violations = t.violations.concat([v]); pendingViol.push(v); t.warn = type;
+  const p = proctorOf(t.quiz);
+  syncNow(false);   // violations are sent at once; the server applies the auto-submit limit
+  if (!(p.maxV && t.violations.length >= p.maxV)) renderStudent();
+}
+let awayAt = 0, awayHidden = false;
+function goneAway(hidden){ if (!ST.take) return; if (!awayAt) awayAt = Date.now(); if (hidden){ awayHidden = true; if (pendingSync) syncNow(false); } }
+function cameBack(){ if (!ST.take || !awayAt) return; const d = Date.now() - awayAt, h = awayHidden; awayAt = 0; awayHidden = false; if (h || d > 1500) violation('tab', { secs: Math.round(d / 1000) }); }
+document.addEventListener('visibilitychange', () => document.hidden ? goneAway(true) : cameBack());
+window.addEventListener('blur', () => goneAway(false));
+window.addEventListener('focus', cameBack);
+[['copy', 'copy'], ['cut', 'cut'], ['paste', 'paste'], ['contextmenu', 'menu'], ['drop', 'drop']].forEach(([ev, type]) =>
+  document.addEventListener(ev, e => { if (!ST.take) return; e.preventDefault(); violation(type); }, true));
+['dragover', 'dragstart', 'selectstart'].forEach(ev => document.addEventListener(ev, e => { if (ST.take) e.preventDefault(); }, true));
+document.addEventListener('keyup', e => { if (ST.take && e.key === 'PrintScreen') violation('screenshot'); });
+function enterFullscreen(){ try { const p = document.documentElement.requestFullscreen?.(); if (p) p.then(() => { if (ST.take) ST.take.fs = true; }).catch(() => {}); } catch {} }
+document.addEventListener('fullscreenchange', () => { const t = ST.take; if (!t) return; if (document.fullscreenElement) t.fs = true; else if (t.fs){ t.fs = false; violation('fullscreen'); } });
+window.addEventListener('pagehide', () => { if (ST.take && pendingSync) syncNow(false); });
+document.addEventListener('keydown', e => {
+  const t = ST.take; if (!t || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) return;
+  const qid = t.order[t.cur], n = t.quiz.questions.find(x => x.id === qid).options.length, i = LETTERS.indexOf(e.key.toUpperCase());
+  if (i >= 0 && i < n){ t.answers[qid] = t.opt[qid][i]; touch(); renderStudent(); }
+  else if (e.key === 'ArrowRight' && t.cur < t.order.length - 1){ t.cur++; renderStudent(); }
+  else if (e.key === 'ArrowLeft' && t.cur > 0){ t.cur--; renderStudent(); }
+});
+
+/* ======================================================================
+   FACULTY  (/f/<group> and /r/<group>)
+   ====================================================================== */
+const F = {
+  group: ROUTE.group || store('qd.group') || 'A', resultsOnly: ROUTE.mode === 'r', groups: [], user: null, me: null,
+  tab: ROUTE.mode === 'r' ? 'results' : (store('qd.tab') || 'students'),
+  students: [], bank: [], quizzes: [], attempts: [], violations: [], faculty: [], activity: null,
+  pending: null, pins: null, rosterFilter: '', bankFilter: { q: '', topic: '', diff: '' },
+  builder: { title: '', duration: 20, count: 10, topics: [], diff: '', divisions: [], shuffle: true, penalty: 1, free: 1, maxV: 5 },
+  resultsQuiz: null, confirm: null, la: { scope: 'all', lo: 40, hi: 75 }, authMode: 'signin', authErr: '', recovery: false, panel: false,
+};
+async function logAct(action, detail){
+  if (!F.me) return;
+  try { await sb.from('activity').insert({ user_id: F.user.id, name: F.me.name, group_id: F.group, action, detail: detail || '' }); } catch {}
+}
+async function facultyBoot(){
+  sb.auth.onAuthStateChange((ev, session) => {
+    if (ev === 'PASSWORD_RECOVERY'){ F.recovery = true; renderFaculty(); }
+    if (ev === 'SIGNED_OUT'){ F.user = null; F.me = null; renderFaculty(); }
+  });
+  const { data } = await sb.auth.getSession();
+  F.user = data.session?.user || null;
+  await loadMe();
+  renderFaculty();
+}
+async function loadMe(){
+  F.me = null;
+  if (!F.user) return;
+  const rows = await q(sb.from('faculty').select('*').eq('user_id', F.user.id)).catch(() => []);
+  F.me = rows[0] || null;
+  if (F.me?.status === 'active') await loadAll();
+}
+async function loadAll(){
+  try {
+    F.groups = await q(sb.from('groups').select('*').order('id'));
+    if (!F.groups.some(g => g.id === F.group)) F.group = F.groups[0]?.id || 'A';
+    store('qd.group', F.group);
+    const [students, bank, quizzes] = await Promise.all([
+      q(sb.from('students').select('id,group_id,roll,name,email,division,pin_set,failed_logins,locked_until,created_at').eq('group_id', F.group).order('roll')),
+      q(sb.from('questions').select('*').order('created_at')),
+      q(sb.from('quizzes').select('*').eq('group_id', F.group).order('created_at', { ascending: false })),
+    ]);
+    Object.assign(F, { students, bank, quizzes });
+    await loadAttempts();
+    if (F.me.role === 'admin') F.faculty = await q(sb.from('faculty').select('*').order('created_at'));
+  } catch (e){ toast(errMsg(e)); }
+}
+async function loadAttempts(){
+  const ids = F.quizzes.map(x => x.id);
+  if (!ids.length){ F.attempts = []; F.violations = []; return; }
+  F.attempts = await q(sb.from('attempts').select('*').in('quiz_id', ids));
+  const aids = F.attempts.map(a => a.id);
+  F.violations = aids.length ? await q(sb.from('violations').select('attempt_id,type,at,secs').in('attempt_id', aids).order('at')) : [];
+}
+// Results refresh every 10 s while a live view is open.
+setInterval(async () => {
+  if (ROUTE.mode === 's' || !F.me || F.me.status !== 'active' || document.hidden) return;
+  if (!['quizzes', 'results', 'learners'].includes(F.tab)) return;
+  const a = document.activeElement; if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
+  try { F.quizzes = await q(sb.from('quizzes').select('*').eq('group_id', F.group).order('created_at', { ascending: false })); await loadAttempts(); renderFaculty(); } catch {}
+}, 10000);
+
+/* results & analytics (same rules as the claude.ai version) */
+function results(quiz){
+  const key = Object.fromEntries(quiz.questions.map(x => [x.id, x.answer]));
+  const byId = new Map(F.students.map(s => [s.id, s]));
+  const vio = new Map(); F.violations.forEach(v => { if (!vio.has(v.attempt_id)) vio.set(v.attempt_id, []); vio.get(v.attempt_id).push({ t: v.type, at: ms(v.at), secs: v.secs }); });
+  const rows = F.attempts.filter(a => a.quiz_id === quiz.id).map(a => {
+    const st = byId.get(a.student_id) || { roll: '(removed student)', name: '', division: '' };
+    let raw = 0, correct = 0, attempted = 0;
+    for (const x of quiz.questions){ const v = a.answers?.[x.id]; if (v !== undefined && v !== null){ attempted++; if (v === key[x.id]){ raw += +x.marks || 1; correct++; } } }
+    const violations = vio.get(a.id) || [], pen = penaltyOf(quiz, violations), tabEv = violations.filter(v => v.t === 'tab');
+    const score = Math.max(0, raw - pen.ded), sub = ms(a.submitted_at);
+    return { roll: st.roll, name: st.name, division: st.division, score, raw, ded: pen.ded, viol: pen.v, violations, tabs: tabEv.length, awaySecs: tabEv.reduce((s, v) => s + (v.secs || 0), 0),
+      correct, attempted, pct: pct(score, quiz.total_marks), submitted: !!sub, auto: a.auto, startedAt: ms(a.started_at), submittedAt: sub, taken: sub ? sub - ms(a.started_at) : null, answers: a.answers || {} };
+  }).sort((a, b) => b.score - a.score || (a.taken ?? 9e15) - (b.taken ?? 9e15));
+  const seen = new Set(rows.map(r => r.roll));
+  const missing = quiz.assigned_rolls.filter(r => !seen.has(r));
+  const perQ = quiz.questions.map(x => { const done = rows.filter(r => r.submitted); const c = done.filter(r => r.answers[x.id] === key[x.id]).length; return { q: x, rate: done.length ? c / done.length : 0, n: done.length }; });
+  return { rows, missing, perQ, key };
+}
+const LEVELS = [
+  { k: 'slow', label: 'Slow learners', color: 'var(--bad)', action: 'Remedial session on the weakest topics, extra practice quizzes, and a follow-up re-test.' },
+  { k: 'average', label: 'Average learners', color: 'var(--warn)', action: 'Targeted practice on the weak topics shown below, and peer study with advanced learners.' },
+  { k: 'advanced', label: 'Advanced learners', color: 'var(--ok)', action: 'Content beyond the syllabus, harder questions, projects, and peer mentoring of slow learners.' },
+];
+function learnerData(scope){
+  const { lo, hi } = F.la; scope = scope || F.la.scope;
+  const quizzes = scope === 'all' ? F.quizzes : F.quizzes.filter(x => x.id === scope);
+  const byId = new Map(F.students.map(s => [s.id, s])), per = new Map();
+  for (const quiz of quizzes){
+    const key = Object.fromEntries(quiz.questions.map(x => [x.id, x.answer]));
+    for (const a of F.attempts.filter(a => a.quiz_id === quiz.id && a.submitted_at)){
+      const st = byId.get(a.student_id); if (!st) continue;
+      const e = per.get(st.roll) || { roll: st.roll, name: st.name, division: st.division, pcts: [], topic: {} };
+      let raw = 0;
+      for (const x of quiz.questions){ const ok = a.answers?.[x.id] === key[x.id], t = x.topic || 'General'; if (ok) raw += +x.marks || 1; e.topic[t] = e.topic[t] || { c: 0, n: 0 }; e.topic[t].n++; if (ok) e.topic[t].c++; }
+      e.pcts.push(pct(raw, quiz.total_marks)); per.set(st.roll, e);
+    }
+  }
+  const rows = [...per.values()].map(e => {
+    const avg = Math.round(e.pcts.reduce((s, x) => s + x, 0) / e.pcts.length * 10) / 10;
+    const ts = Object.entries(e.topic).map(([t, v]) => ({ t, acc: v.c / v.n })).sort((a, b) => a.acc - b.acc);
+    return { ...e, avg, n: e.pcts.length, level: avg < lo ? 'slow' : avg >= hi ? 'advanced' : 'average', weakest: ts[0], strongest: ts[ts.length - 1] };
+  }).sort((a, b) => a.avg - b.avg);
+  const assigned = scope === 'all' ? F.students.map(s => s.roll) : (quizzes[0]?.assigned_rolls || []);
+  const noData = assigned.filter(r => !per.has(r));
+  const topics = [...new Set(quizzes.flatMap(x => x.questions.map(y => y.topic || 'General')))].sort();
+  const topicAcc = (list, t) => { let c = 0, n = 0; list.forEach(r => { const v = r.topic[t]; if (v){ c += v.c; n += v.n; } }); return n ? c / n : null; };
+  return { rows, noData, topics, topicAcc, quizzes };
+}
+
+/* ---------- faculty screens ---------- */
+function authView(){
+  const err = F.authErr ? `<div class="issues" role="alert">${esc(F.authErr)}</div>` : '';
+  const shell = (label, title, body) => `<section class="panel" style="max-width:460px;margin:0 auto;width:100%"><div><div class="label">${label}</div><h2>${title}</h2></div>${body}</section>`;
+  if (F.recovery) return shell('Faculty', 'Set a new password', `
+    <label class="field"><span>New password (8+ characters)</span><input type="password" id="fa-new" autocomplete="new-password"></label>
+    ${err}<div class="row"><button class="btn primary" data-act="f-recover">Save new password</button></div>`);
+  if (F.user && !F.me) return shell('Faculty · first sign-in', 'Tell us your name', `
+    <p class="muted">Signed in as ${esc(F.user.email)}. The first person to join becomes the administrator; everyone after waits for an administrator to approve them.</p>
+    <label class="field"><span>Your name</span><input type="text" id="fa-name" autocomplete="name" placeholder="e.g. Prof. A. Kulkarni"></label>
+    ${err}<div class="row"><button class="btn primary" data-act="f-register">Continue</button><button class="btn ghost" data-act="f-logout">Sign out</button></div>`);
+  if (F.me?.status === 'pending') return shell('Faculty', 'Waiting for approval', `<p class="muted">${esc(F.me.name)}, your account (${esc(F.me.email)}) is waiting for a Quiz Desk administrator to approve it. Ask them to open Accounts and approve you, then reload this page.</p><div class="row"><button class="btn" data-act="f-reload">Check again</button><button class="btn ghost" data-act="f-logout">Sign out</button></div>`);
+  if (F.me?.status === 'disabled') return shell('Faculty', 'Account disabled', `<p class="muted">Ask a Quiz Desk administrator to enable your account.</p><div class="row"><button class="btn ghost" data-act="f-logout">Sign out</button></div>`);
+  const up = F.authMode === 'signup', forgot = F.authMode === 'forgot';
+  return shell(`Faculty login · ${F.resultsOnly ? 'results' : 'quiz platform'} · Group ${esc(F.group)}`, forgot ? 'Reset your password' : up ? 'Create a faculty account' : 'Log in to start the quiz platform', `
+    <label class="field"><span>College email</span><input type="text" id="fa-email" inputmode="email" autocomplete="email"></label>
+    ${forgot ? '' : `<label class="field"><span>Password${up ? ' (8+ characters)' : ''}</span><input type="password" id="fa-pass" autocomplete="${up ? 'new-password' : 'current-password'}"></label>`}
+    ${err}
+    <div class="row"><button class="btn primary" data-act="${forgot ? 'f-forgot' : up ? 'f-signup' : 'f-login'}">${forgot ? 'Email me a reset link' : up ? 'Create account' : 'Log in'}</button></div>
+    <div class="row small">${up || forgot ? '<button class="btn ghost sm" data-act="f-mode" data-v="signin">Back to log in</button>' : '<button class="btn ghost sm" data-act="f-mode" data-v="signup">New faculty? Create an account</button><button class="btn ghost sm" data-act="f-mode" data-v="forgot">Forgot password?</button>'}</div>`);
+}
+function uploader(kind){
+  const isS = kind === 'students';
+  const cols = isS ? [['Roll No', 0], ['Name', 0], ['Email', 1], ['Division', 1]] : [['Question', 0], ['A', 0], ['B', 0], ['C', 1], ['D', 1], ['Answer', 0], ['Topic', 1], ['Difficulty', 1], ['Marks', 1]];
+  const p = F.pending?.kind === kind ? F.pending : null;
+  let body;
+  if (p?.error) body = `<div class="issues" role="alert">${esc(p.error)}</div><div class="row"><button class="btn sm" data-act="f-cancel-pending">Dismiss</button></div>`;
+  else if (p){
+    const n = p.rows.length, grp = F.groups.find(g => g.id === F.group);
+    const after = p.mode === 'replace' ? n : new Set([...F.students.map(s => s.roll), ...p.rows.map(s => s.roll)]).size;
+    const warn = isS && grp && after > grp.student_limit ? [`Group limit: Group ${F.group} is sized for ${grp.student_limit} students and this makes ${after}. Put the extra students in another group.`] : [];
+    const issues = warn.concat(p.issues);
+    const prev = isS
+      ? `<table><thead><tr><th>Roll No</th><th>Name</th><th>Div</th><th>Email</th></tr></thead><tbody>${p.rows.slice(0, 6).map(s => `<tr><td class="mono">${esc(s.roll)}</td><td>${esc(s.name)}</td><td>${esc(s.division)}</td><td class="muted">${esc(s.email)}</td></tr>`).join('')}</tbody></table>`
+      : `<table><thead><tr><th>Question</th><th>Answer</th><th>Topic</th><th class="num">Marks</th></tr></thead><tbody>${p.rows.slice(0, 5).map(x => `<tr><td class="wrap">${esc(x.text)}</td><td><span class="bub sm fill ok">${LETTERS[x.answer]}</span></td><td>${esc(x.topic)}</td><td class="num">${x.marks}</td></tr>`).join('')}</tbody></table>`;
+    body = `<div><div class="label">Ready to save · ${esc(p.name)}</div><h3>${n} ${isS ? 'student' : 'question'}${n === 1 ? '' : 's'} read</h3></div>
+      ${issues.length ? `<div class="issues">${issues.slice(0, 40).map(i => `<div>${esc(i)}</div>`).join('')}</div>` : '<div class="issues ok">Every row read cleanly.</div>'}
+      <div class="tbl-wrap">${prev}</div>
+      ${isS && F.students.length ? `<div class="row"><label class="check"><input type="radio" name="mode-s" id="mode-merge" value="merge" ${p.mode === 'merge' ? 'checked' : ''}> Merge (same roll number updates the student)</label>
+        <label class="check"><input type="radio" name="mode-s" id="mode-replace" value="replace" ${p.mode === 'replace' ? 'checked' : ''}> Replace all ${F.students.length} students in Group ${esc(F.group)}</label></div>` : ''}
+      ${!isS ? '<p class="small muted">Questions go into the shared bank used by every group. Exact duplicates are skipped.</p>' : ''}
+      <div class="row"><button class="btn primary" data-act="f-save-pending" ${n ? '' : 'disabled'}>Save ${n} ${isS ? 'students' : 'questions'}</button><button class="btn ghost" data-act="f-cancel-pending">Cancel</button></div>`;
+  } else {
+    body = `<label class="drop" data-drop="${kind}" for="file-${kind}"><strong>Drop ${isS ? `Group ${esc(F.group)}'s student list` : 'questions for the shared bank'} here</strong>
+        <span class="small muted">Excel (.xlsx, .xls) or CSV, first row as headers</span>
+        <span class="cols">${cols.map(([c, o]) => `<span class="chip ${o ? 'opt' : ''}">${c}</span>`).join('')}</span>
+        <span class="small muted">Dashed columns are optional.${isS ? '' : ' Answer can be A–D, 1–4, or the option text.'}</span></label>
+      <input type="file" id="file-${kind}" accept=".csv,.xlsx,.xls,.tsv,.txt" hidden>
+      <details><summary class="small" style="cursor:pointer">Or paste rows from a spreadsheet</summary><div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <textarea id="paste-${kind}" placeholder="${isS ? 'Roll No,Name,Email,Division' : 'Question,A,B,C,D,Answer,Topic,Difficulty,Marks'}"></textarea>
+        <div class="row"><button class="btn sm" data-act="f-read-paste" data-kind="${kind}">Read pasted rows</button></div></div></details>`;
+  }
+  return `<section class="panel"><div><div class="label">Upload</div><h2>${isS ? 'Student list' : 'Question bank'}</h2></div>${body}</section>`;
+}
+async function handleUpload(kind, source){
+  try {
+    const rows = typeof source === 'string' ? parseCSV(source) : await fileRows(source);
+    if (rows.length < 2) throw new Error('The file has a header row but no data rows.');
+    const res = kind === 'students' ? parseStudents(rows) : parseQuestions(rows);
+    if (res.error) throw new Error(res.error);
+    F.pending = { kind, rows: res.rows, issues: res.issues, mode: 'merge', name: typeof source === 'string' ? 'Pasted text' : source.name };
+  } catch (e){ F.pending = { kind, error: e.message || String(e) }; }
+  renderFaculty();
+}
+async function savePending(){
+  const p = F.pending;
+  if (p.kind === 'students'){
+    if (p.mode === 'replace'){
+      const keep = new Set(p.rows.map(r => r.roll)), gone = F.students.filter(s => !keep.has(s.roll)).map(s => s.id);
+      if (gone.length) await q(sb.from('students').delete().in('id', gone));
+    }
+    await q(sb.from('students').upsert(p.rows.map(r => ({ group_id: F.group, ...r })), { onConflict: 'group_id,roll' }));
+    logAct('Uploaded student list', `${p.rows.length} rows from ${p.name} into Group ${F.group}, ${p.mode === 'replace' ? 'replaced list' : 'merged'}`);
+    toast(`Saved ${p.rows.length} students in Group ${F.group}. Next: create PINs.`);
+  } else {
+    const added = await rpc('import_questions', { p_rows: p.rows });
+    logAct('Uploaded questions', `${added} added from ${p.name}; ${p.rows.length - added} duplicates skipped`);
+    toast(`Added ${added} questions to the shared bank${p.rows.length - added ? `; skipped ${p.rows.length - added} duplicates` : ''}.`);
+  }
+  F.pending = null; await loadAll(); renderFaculty();
+}
+function newPin(){ const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + a[0] % 900000); }
+async function makePins(list){
+  if (!list.length) return toast('Every student already has a PIN.');
+  const pins = Object.fromEntries(list.map(s => [s.id, newPin()]));
+  await rpc('set_student_pins', { p_pins: pins });
+  F.pins = list.map(s => ({ roll: s.roll, name: s.name, division: s.division, pin: pins[s.id] }));
+  logAct(list.length === 1 ? 'Reset PIN' : 'Created PINs', list.length === 1 ? list[0].roll : `${list.length} students in Group ${F.group}`);
+  await loadAll(); renderFaculty();
+}
+function pinsPanel(){
+  if (!F.pins) return '';
+  return `<section class="panel" style="border-color:var(--omr)"><div class="panel-head"><div><div class="label" style="color:var(--omr)">Shown once · Group ${esc(F.group)}</div><h3>${F.pins.length} new PIN${F.pins.length === 1 ? '' : 's'}: save or print these now</h3></div>
+      <div class="row"><button class="btn primary sm" data-act="f-pins-save">Save PINs (Excel)</button><button class="btn sm ghost" data-act="f-pins-close">I've saved them</button></div></div>
+    <p class="small muted">PINs are stored only in scrambled form, so this is the only time they can be shown. If one is lost, use Reset PIN for that student. Student link: <span class="mono">${esc(linkFor('s', F.group))}</span></p>
+    <div class="pinsheet">${F.pins.map(p => `<div class="pinslip"><span class="small muted">Group ${esc(F.group)} · ${esc(p.roll)}</span><span>${esc(p.name)}</span><b>${esc(p.pin)}</b></div>`).join('')}</div></section>`;
+}
+function studentsView(){
+  const f = norm(F.rosterFilter), list = F.students.filter(s => !f || norm(s.roll + s.name + s.email + s.division).includes(f));
+  const noPin = F.students.filter(s => !s.pin_set);
+  const table = F.students.length ? `
+    <div class="row"><input type="search" id="roster-q" placeholder="Search roll, name, division" value="${esc(F.rosterFilter)}" style="max-width:280px">
+      ${noPin.length ? `<button class="btn primary sm" data-act="f-pins-missing">Create PINs for ${noPin.length} student${noPin.length === 1 ? '' : 's'}</button>` : '<span class="pill live">Every student has a PIN</span>'}
+      ${F.confirm === 'allpins' ? '<button class="btn danger sm" data-act="f-pins-all">Confirm: new PINs for everyone</button><button class="btn ghost sm" data-act="f-confirm-no">Cancel</button>' : '<button class="btn ghost sm" data-act="f-confirm" data-v="allpins">New PINs for everyone</button>'}</div>
+    <div class="tbl-wrap scroll"><table><thead><tr><th>Roll No</th><th>Name</th><th>Div</th><th>Email</th><th>PIN</th><th></th></tr></thead><tbody>
+      ${list.map(s => `<tr><td class="mono">${esc(s.roll)}</td><td>${esc(s.name) || '<span class="muted">—</span>'}</td><td>${esc(s.division)}</td><td class="muted">${esc(s.email)}</td>
+        <td>${s.pin_set ? (s.locked_until && new Date(s.locked_until) > new Date() ? '<span class="pill bad">Locked</span>' : '<span class="pill live">Set</span>') : '<span class="pill closed">None</span>'}</td>
+        <td><div class="row"><button class="btn sm ghost" data-act="f-pin-one" data-id="${s.id}">${s.pin_set ? 'Reset PIN' : 'Create PIN'}</button>
+          ${F.confirm === 'st:' + s.id ? `<button class="btn sm danger" data-act="f-rm-student" data-id="${s.id}">Confirm remove</button>` : `<button class="btn sm ghost" data-act="f-confirm" data-v="st:${s.id}">Remove</button>`}</div></td></tr>`).join('')}
+    </tbody></table></div>`
+    : `<div class="empty"><h3>No students in Group ${esc(F.group)} yet</h3><p>Upload the class list, then create PINs. Students sign in with their roll number and PIN.</p></div>`;
+  return pinsPanel() + `<div class="grid2">${uploader('students')}<section class="panel"><div><div class="label">Group ${esc(F.group)} · class list</div><h2>${F.students.length} student${F.students.length === 1 ? '' : 's'}</h2></div>${table}</section></div>`;
+}
+function bankView(){
+  const f = F.bankFilter, topics = [...new Set(F.bank.map(x => x.topic))].sort(), qn = norm(f.q);
+  const list = F.bank.filter(x => (!f.topic || x.topic === f.topic) && (!f.diff || x.difficulty === f.diff) && (!qn || norm(x.text + x.options.join('')).includes(qn)));
+  const content = F.bank.length ? `
+    <div class="fields">
+      <label class="field"><span>Search</span><input type="search" id="bank-q" value="${esc(f.q)}" placeholder="Words in question or options"></label>
+      <label class="field"><span>Topic</span><select id="bank-topic"><option value="">All topics</option>${topics.map(t => `<option ${f.topic === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+      <label class="field"><span>Difficulty</span><select id="bank-diff"><option value="">Any</option>${['easy', 'medium', 'hard'].map(d => `<option value="${d}" ${f.diff === d ? 'selected' : ''}>${d[0].toUpperCase() + d.slice(1)}</option>`).join('')}</select></label></div>
+    <p class="small muted">${list.length} shown · ${topics.map(t => `${esc(t)} <b class="mono">${F.bank.filter(x => x.topic === t).length}</b>`).join(' · ')}</p>
+    <div class="qlist scroll">${list.map((x, i) => `<article class="qcard">
+      <div class="qcard-top"><p class="qtxt"><b class="mono muted">${i + 1}.</b> ${esc(x.text)}</p>${F.confirm === 'q:' + x.id ? `<button class="btn sm danger" data-act="f-rm-q" data-id="${x.id}">Confirm delete</button>` : `<button class="btn sm ghost" data-act="f-confirm" data-v="q:${x.id}">Delete</button>`}</div>
+      <div class="opts">${x.options.map((o, j) => `<div class="${j === x.answer ? 'right' : ''}"><span class="bub sm ${j === x.answer ? 'fill ok' : ''}">${LETTERS[j]}</span><span class="qtxt">${esc(o)}</span></div>`).join('')}</div>
+      <div class="qmeta"><span>${esc(x.topic)}</span><span class="diff-${x.difficulty}">${x.difficulty}</span><span>${x.marks} mark${x.marks == 1 ? '' : 's'}</span></div></article>`).join('')}</div>`
+    : '<div class="empty"><h3>The bank is empty</h3><p>Upload multiple-choice questions with their answer key. Every group builds quizzes from this one bank; students never see the answer key.</p></div>';
+  return `<div class="grid2">${uploader('bank')}<section class="panel"><div><div class="label">Shared by all groups · answer key hidden from students</div><h2>${F.bank.length} question${F.bank.length === 1 ? '' : 's'}</h2></div>${content}</section></div>`;
+}
+function builderPool(){ const b = F.builder; return F.bank.filter(x => (!b.topics.length || b.topics.includes(x.topic)) && (!b.diff || x.difficulty === b.diff)); }
+function quizzesView(){
+  const b = F.builder, topics = [...new Set(F.bank.map(x => x.topic))].sort(), divs = [...new Set(F.students.map(s => s.division).filter(Boolean))].sort(), pool = builderPool();
+  const assigned = F.students.filter(s => !b.divisions.length || b.divisions.includes(s.division)).length, n = Math.min(+b.count || 0, pool.length);
+  const builder = `<section class="panel"><div><div class="label">New quiz · Group ${esc(F.group)}</div><h2>Draw from the shared bank</h2></div>
+    <label class="field"><span>Title</span><input type="text" id="b-title" value="${esc(b.title)}" placeholder="e.g. Unit 2 test · Deep Learning"></label>
+    <div class="fields">
+      <label class="field"><span>Questions</span><input type="number" id="b-count" min="1" value="${b.count}"></label>
+      <label class="field"><span>Minutes</span><input type="number" id="b-duration" min="1" value="${b.duration}"></label>
+      <label class="field"><span>Difficulty</span><select id="b-diff"><option value="">Any</option>${['easy', 'medium', 'hard'].map(d => `<option value="${d}" ${b.diff === d ? 'selected' : ''}>${d[0].toUpperCase() + d.slice(1)}</option>`).join('')}</select></label></div>
+    ${topics.length ? `<div class="field"><span>Topics <span class="muted">(none ticked = all)</span></span><div class="row">${topics.map((t, i) => `<label class="check"><input type="checkbox" id="b-topic-${i}" data-topic="${esc(t)}" ${b.topics.includes(t) ? 'checked' : ''}> ${esc(t)}</label>`).join('')}</div></div>` : ''}
+    ${divs.length ? `<div class="field"><span>Assign to divisions <span class="muted">(none ticked = whole group)</span></span><div class="row">${divs.map((d, i) => `<label class="check"><input type="checkbox" id="b-div-${i}" data-div="${esc(d)}" ${b.divisions.includes(d) ? 'checked' : ''}> Div ${esc(d)}</label>`).join('')}</div></div>` : ''}
+    <label class="check"><input type="checkbox" id="b-shuffle" ${b.shuffle ? 'checked' : ''}> Shuffle question and option order for each student</label>
+    <div class="field"><span>Proctoring</span><div class="fields">
+      <label class="field"><span>Marks cut per violation</span><input type="number" id="b-penalty" min="0" step="0.5" value="${b.penalty}"></label>
+      <label class="field"><span>Free warnings</span><input type="number" id="b-free" min="0" value="${b.free}"></label>
+      <label class="field"><span>Auto-submit after <span class="muted">(0 = never)</span></span><input type="number" id="b-maxv" min="0" value="${b.maxV}"></label></div></div>
+    <p class="small muted">${pool.length} questions match · draws <b class="mono">${n}</b> at random · assigned to <b class="mono">${assigned}</b> students in Group ${esc(F.group)}</p>
+    <div class="row"><button class="btn primary" data-act="f-create-quiz" ${pool.length && assigned ? '' : 'disabled'}>Create quiz</button></div></section>`;
+  const cards = F.quizzes.length ? `<div class="quizzes">${F.quizzes.map(x => {
+      const r = results(x), sub = r.rows.filter(y => y.submitted).length, now = r.rows.length - sub, p = proctorOf(x);
+      return `<article class="qz"><div class="row" style="justify-content:space-between"><span class="pill ${x.status}">${x.status === 'live' ? 'Live' : x.status === 'closed' ? 'Closed' : 'Draft'}</span>${x.released ? '<span class="pill info">Results out</span>' : ''}</div>
+        <h3>${esc(x.title)}</h3>
+        <div class="qz-facts"><span><b>${x.questions.length}</b> Qs</span><span><b>${x.total_marks}</b> marks</span><span><b>${x.duration_min}</b> min</span><span><b>${sub}/${x.assigned_rolls.length}</b> submitted</span>${x.status === 'live' ? `<span><b>${now}</b> answering now</span>` : ''}</div>
+        <p class="small muted">Created ${fmtDate(x.created_at)}${x.created_by_name ? ' by ' + esc(x.created_by_name) : ''}${x.started_by_name ? ` · started by <b style="color:var(--ink)">${esc(x.started_by_name)}</b> at ${fmtDate(x.started_at)}` : ''}${x.closed_by_name && x.status === 'closed' ? ` · closed by ${esc(x.closed_by_name)}` : ''}</p>
+        <p class="small muted">Proctored: −${p.penalty} per violation after ${p.free} warning${p.free == 1 ? '' : 's'}${p.maxV ? `, auto-submit at ${p.maxV}` : ''}${r.rows.some(y => y.tabs) ? ` · <b style="color:var(--bad)">${r.rows.reduce((s, y) => s + y.tabs, 0)} tab switches</b>` : ''}</p>
+        <div class="qz-actions">
+          ${x.status !== 'live' ? `<button class="btn sm primary" data-act="f-live" data-id="${x.id}">${x.status === 'closed' ? 'Reopen' : 'Go live'}</button>` : `<button class="btn sm" data-act="f-close" data-id="${x.id}">Close</button>`}
+          <button class="btn sm" data-act="f-results" data-id="${x.id}">Results</button>
+          <button class="btn sm" data-act="f-release" data-id="${x.id}">${x.released ? 'Hide results' : 'Release results'}</button>
+          ${F.confirm === 'qz:' + x.id ? `<button class="btn sm danger" data-act="f-del-quiz" data-id="${x.id}">Confirm delete</button><button class="btn sm ghost" data-act="f-confirm-no">Keep</button>` : `<button class="btn sm ghost" data-act="f-confirm" data-v="qz:${x.id}">Delete</button>`}
+        </div></article>`; }).join('')}</div>`
+    : '<div class="empty"><h3>No quizzes yet</h3><p>Create one from the bank. It starts as a draft; students see it only when you set it live.</p></div>';
+  return `<div class="grid2">${builder}<section class="panel"><div><div class="label">Group ${esc(F.group)}</div><h2>${F.quizzes.length} quiz${F.quizzes.length === 1 ? '' : 'zes'}</h2></div>${cards}</section></div>`;
+}
+function resultsView(){
+  if (!F.quizzes.length) return '<section class="panel"><div class="empty"><h3>No results yet</h3><p>Results appear here as students submit quizzes.</p></div></section>';
+  const quiz = F.quizzes.find(x => x.id === F.resultsQuiz) || F.quizzes[0]; F.resultsQuiz = quiz.id;
+  const { rows, missing, perQ } = results(quiz), done = rows.filter(r => r.submitted);
+  const avg = done.length ? done.reduce((a, r) => a + r.pct, 0) / done.length : 0, hi = done.length ? Math.max(...done.map(r => r.score)) : 0;
+  const rm = new Map(F.students.map(s => [s.roll, s]));
+  return `<section class="panel"><div class="panel-head"><div><div class="label">Results · Group ${esc(F.group)}</div><h2>${esc(quiz.title)}</h2></div>
+      <div class="row"><select id="r-quiz" aria-label="Choose quiz" style="width:auto;max-width:100%">${F.quizzes.map(x => `<option value="${x.id}" ${x.id === quiz.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
+      <button class="btn" data-act="f-export" ${rows.length || missing.length ? '' : 'disabled'}>Export CSV</button><button class="btn primary" data-act="f-save-all">Save all results (Excel)</button></div></div>
+    <div class="stats">
+      <div class="stat"><span class="label">Submitted</span><b>${done.length}<span class="muted" style="font-size:1rem"> / ${quiz.assigned_rolls.length}</span></b></div>
+      <div class="stat"><span class="label">Answering now</span><b>${rows.length - done.length}</b></div>
+      <div class="stat"><span class="label">Average</span><b>${done.length ? avg.toFixed(1) + '%' : '—'}</b></div>
+      <div class="stat"><span class="label">Highest</span><b>${done.length ? hi + '<span class="muted" style="font-size:1rem"> / ' + quiz.total_marks + '</span>' : '—'}</b></div>
+      <div class="stat"><span class="label">Scored 40%+</span><b>${done.length ? done.filter(r => r.pct >= 40).length : '—'}</b></div>
+      <div class="stat"><span class="label">Tab switches</span><b style="${rows.some(r => r.tabs) ? 'color:var(--bad)' : ''}">${rows.reduce((s, r) => s + r.tabs, 0)}</b><span class="small muted">${rows.filter(r => r.tabs).length} students</span></div>
+    </div>
+    <p class="small muted">Refreshes every 10 seconds. Students' answers sync about every 15–20 seconds and immediately on submit.</p>
+    <div class="tbl-wrap scroll"><table><thead><tr><th class="num">#</th><th>Roll No</th><th>Name</th><th class="num">Score</th><th class="num">%</th><th class="num">Correct</th><th class="num">Tab switches</th><th>Violations</th><th>Status</th><th class="num">Time</th><th>Submitted</th></tr></thead><tbody>
+      ${rows.map((r, i) => `<tr><td class="num">${i + 1}</td><td class="mono">${esc(r.roll)}</td><td>${esc(r.name)}</td><td class="num">${r.score}/${quiz.total_marks}${r.ded ? ` <span class="small" style="color:var(--bad)">(−${r.ded})</span>` : ''}</td><td class="num">${r.pct}</td><td class="num">${r.correct}/${quiz.questions.length}</td>
+        <td class="num" ${r.tabs ? 'style="color:var(--bad)"' : ''}>${r.tabs}${r.tabs ? ` <span class="small muted">(${fmtTime(r.awaySecs * 1000)} away)</span>` : ''}</td>
+        <td>${r.viol ? `<span class="pill bad" title="${esc(r.violations.map(v => `${new Date(v.at).toLocaleTimeString()} · ${VIOL_LABEL[v.t] || v.t}${v.secs ? ` (${v.secs}s away)` : ''}`).join('\n'))}">${r.viol} · ${[...new Set(r.violations.map(v => v.t))].join(', ')}</span>` : '<span class="muted">None</span>'}</td>
+        <td>${r.submitted ? (r.auto ? '<span class="pill closed">Auto</span>' : '<span class="pill live">Submitted</span>') : '<span class="pill info">In progress</span>'}</td><td class="num">${r.taken ? fmtTime(r.taken) : '—'}</td><td class="muted">${fmtDate(r.submittedAt)}</td></tr>`).join('')}
+      ${missing.map(roll => `<tr><td class="num muted">—</td><td class="mono">${esc(roll)}</td><td>${esc(rm.get(roll)?.name)}</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td><td></td><td><span class="pill draft">Not started</span></td><td></td><td></td></tr>`).join('')}
+    </tbody></table></div></section>
+    <section class="panel"><div><div class="label">Item analysis · share of submitted students who got each question right</div><h3>Question accuracy</h3></div>
+      ${done.length ? `<div class="bars">${perQ.map((p, i) => `<div class="qacc"><div class="barrow"><span class="mono">Q${i + 1}</span><div class="track"><i class="${p.rate < .4 ? 'low' : ''}" style="width:${Math.round(p.rate * 100)}%"></i></div><span class="mono" style="text-align:right">${Math.round(p.rate * 100)}%</span></div>
+        <p class="small qtxt">${esc(p.q.text)} <span class="muted">· ${esc(p.q.topic || 'General')} · ${p.q.marks} mark${p.q.marks == 1 ? '' : 's'}</span></p></div>`).join('')}</div><p class="small muted">Red bars are under 40%: worth revisiting in class.</p>` : '<p class="muted">Appears after the first submission.</p>'}</section>`;
+}
+function learnersView(){
+  if (!F.quizzes.length) return '<section class="panel"><div class="empty"><h3>No quizzes yet</h3><p>Learner levels appear once students submit quizzes.</p></div></section>';
+  if (F.la.scope !== 'all' && !F.quizzes.some(x => x.id === F.la.scope)) F.la.scope = 'all';
+  const d = learnerData(), total = d.rows.length, by = Object.fromEntries(LEVELS.map(L => [L.k, d.rows.filter(r => r.level === L.k)]));
+  const accCell = a => a === null ? '<td class="num muted">—</td>' : `<td class="num" style="${a < .4 ? 'color:var(--bad);font-weight:600' : ''}">${Math.round(a * 100)}%</td>`;
+  const head = `<section class="panel"><div class="panel-head"><div><div class="label">Learner analytics · Group ${esc(F.group)} · marks before proctoring deductions</div><h2>Slow, average and advanced learners</h2></div>
+      <div class="row"><button class="btn" data-act="f-la-export" ${total ? '' : 'disabled'}>Export CSV</button><button class="btn primary" data-act="f-save-all">Save all results (Excel)</button></div></div>
+    <div class="fields" style="max-width:640px">
+      <label class="field"><span>Based on</span><select id="la-scope"><option value="all">All quizzes (average)</option>${F.quizzes.map(x => `<option value="${x.id}" ${F.la.scope === x.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select></label>
+      <label class="field"><span>Slow below (%)</span><input type="number" id="la-lo" min="0" max="100" value="${F.la.lo}"></label>
+      <label class="field"><span>Advanced from (%)</span><input type="number" id="la-hi" min="0" max="100" value="${F.la.hi}"></label></div>`;
+  if (!total) return head + '<div class="empty"><h3>No submitted attempts yet</h3></div></section>';
+  return head + `<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--line)">${LEVELS.map(L => by[L.k].length ? `<div style="width:${by[L.k].length / total * 100}%;background:${L.color}"></div>` : '').join('')}</div>
+      <div class="legend">${LEVELS.map(L => `<span><i style="background:${L.color};border-color:${L.color}"></i>${L.label} <b class="mono">${by[L.k].length}</b> (${Math.round(by[L.k].length / total * 100)}%)</span>`).join('')}${d.noData.length ? `<span><i></i>No attempt <b class="mono">${d.noData.length}</b></span>` : ''}</div></section>`
+    + LEVELS.map(L => { const g = by[L.k];
+      return `<section class="panel" style="border-top:3px solid ${L.color}"><div><div class="label" style="color:${L.color}">${L.label} · ${g.length}</div><h3>${esc(L.action)}</h3></div>
+        ${g.length ? `<div class="tbl-wrap scroll" style="max-height:320px"><table><thead><tr><th>Roll No</th><th>Name</th><th class="num">Average</th><th class="num">Quizzes</th><th>Weakest topic</th><th>Strongest topic</th></tr></thead><tbody>
+          ${(L.k === 'advanced' ? g.slice().reverse() : g).map(r => `<tr><td class="mono">${esc(r.roll)}</td><td>${esc(r.name)}</td><td class="num">${r.avg}%</td><td class="num">${r.n}</td><td>${r.weakest ? `${esc(r.weakest.t)} <span class="small muted">${Math.round(r.weakest.acc * 100)}%</span>` : '—'}</td><td>${r.strongest ? `${esc(r.strongest.t)} <span class="small muted">${Math.round(r.strongest.acc * 100)}%</span>` : '—'}</td></tr>`).join('')}
+        </tbody></table></div>` : '<p class="muted">No students in this group.</p>'}</section>`; }).join('')
+    + `<section class="panel"><div><div class="label">Topic accuracy by learner level · red is under 40%</div><h3>Where each group needs help</h3></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Topic</th>${LEVELS.map(L => `<th class="num" style="color:${L.color}">${L.label.split(' ')[0]}</th>`).join('')}<th class="num">Whole class</th></tr></thead><tbody>
+        ${d.topics.map(t => `<tr><td>${esc(t)}</td>${LEVELS.map(L => accCell(d.topicAcc(by[L.k], t))).join('')}${accCell(d.topicAcc(d.rows, t))}</tr>`).join('')}</tbody></table></div></section>`;
+}
+async function loadActivity(){ try { F.activity = await q(sb.from('activity').select('*').or(`group_id.eq.${F.group},group_id.is.null`).order('at', { ascending: false }).limit(300)); } catch { F.activity = []; } renderFaculty(); }
+function activityView(){
+  if (!F.activity){ loadActivity(); return '<section class="panel"><div class="empty"><h3>Loading activity…</h3></div></section>'; }
+  return `<section class="panel"><div class="panel-head"><div><div class="label">Activity · Group ${esc(F.group)} and account changes · latest 300</div><h2>Who did what</h2></div><button class="btn sm" data-act="f-activity-refresh">Refresh</button></div>
+    ${F.activity.length ? `<div class="tbl-wrap scroll"><table><thead><tr><th>When</th><th>Faculty</th><th>Action</th><th>Details</th></tr></thead><tbody>
+      ${F.activity.map(e => `<tr><td class="muted">${fmtDate(e.at)}</td><td>${esc(e.name)}</td><td>${esc(e.action)}</td><td class="wrap">${esc(e.detail)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No activity recorded yet.</p>'}</section>`;
+}
+function linksCard(){
+  return `<section class="panel"><div><div class="label">Group ${esc(F.group)} · three links</div><h3>Share each link with the right people</h3></div>
+    ${[['s', 'Students', 'Send to this group only. Opens the roll number + PIN sign-in.'], ['f', 'Faculty', 'Students, question bank, quizzes and results. Needs a faculty login.'], ['r', 'Results', 'Results and analytics only. Needs a faculty login.']].map(([m, label, hint]) => `
+      <div class="linkrow"><span><b>${label}</b><br><span class="small muted">${hint}</span></span><input type="text" id="lk-${m}" class="mono" readonly value="${esc(linkFor(m, F.group))}" aria-label="${label} link"><button class="btn sm ${m === 's' ? 'primary' : ''}" data-act="f-copy" data-box="lk-${m}">Copy</button></div>`).join('')}</section>`;
+}
+function accountsPanel(){
+  if (!F.panel) return '';
+  const admin = F.me.role === 'admin', err = F.authErr ? `<div class="issues" role="alert">${esc(F.authErr)}</div>` : '';
+  return `<section class="panel"><div class="panel-head"><div><div class="label">${admin ? 'Faculty accounts' : 'My account'}</div><h3>${esc(F.me.name)} <span class="small muted">${esc(F.me.email)}</span></h3></div><button class="btn sm ghost" data-act="f-panel">Close</button></div>
+    ${admin ? `<div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th><th></th></tr></thead><tbody>
+      ${F.faculty.map(a => { const me = a.user_id === F.user.id; return `<tr><td>${esc(a.name)}${me ? ' <span class="small muted">(you)</span>' : ''}</td><td class="muted">${esc(a.email)}</td><td>${a.role === 'admin' ? 'Administrator' : 'Faculty'}</td>
+        <td><span class="pill ${a.status === 'active' ? 'live' : a.status === 'pending' ? 'info' : 'closed'}">${a.status === 'active' ? 'Active' : a.status === 'pending' ? 'Waiting for approval' : 'Disabled'}</span></td><td class="muted">${fmtDate(a.created_at)}</td>
+        <td>${me ? '' : `<div class="row">${a.status !== 'active' ? `<button class="btn sm primary" data-act="f-acct" data-id="${a.user_id}" data-v="active">${a.status === 'pending' ? 'Approve' : 'Enable'}</button>` : `<button class="btn sm ghost" data-act="f-acct" data-id="${a.user_id}" data-v="disabled">Disable</button>`}
+          <button class="btn sm ghost" data-act="f-role" data-id="${a.user_id}" data-v="${a.role === 'admin' ? 'faculty' : 'admin'}">${a.role === 'admin' ? 'Make faculty' : 'Make admin'}</button>
+          ${F.confirm === 'ac:' + a.user_id ? `<button class="btn sm danger" data-act="f-acct-rm" data-id="${a.user_id}">Confirm remove</button>` : `<button class="btn sm ghost" data-act="f-confirm" data-v="ac:${a.user_id}">Remove</button>`}</div>`}</td></tr>`; }).join('')}
+      </tbody></table></div><p class="small muted">New faculty create their own account from the login screen with "New faculty? Create an account", then appear here for approval.</p>` : ''}
+    <div class="field"><span>Change my password</span><div class="row"><input type="password" id="my-new" autocomplete="new-password" placeholder="New password (8+ characters)" style="max-width:320px"><button class="btn sm" data-act="f-my-pass">Change password</button></div></div>${err}</section>`;
+}
+function renderFaculty(){
+  const tabs = $('#tabs'), end = $('#barEnd'), v = $('#view');
+  $('#groupChip').hidden = false; $('#groupChip').textContent = 'Group ' + F.group + (F.resultsOnly ? ' · results' : '');
+  if (!F.me || F.me.status !== 'active' || F.recovery){ tabs.innerHTML = ''; end.innerHTML = '<span class="role">Faculty</span>'; v.innerHTML = authView(); bindFaculty(); return; }
+  const t = F.resultsOnly ? [['results', 'Results'], ['learners', 'Learners']] : [['students', `Students <span class="count">${F.students.length}</span>`], ['bank', `Question bank <span class="count">${F.bank.length}</span>`], ['quizzes', `Quizzes <span class="count">${F.quizzes.length}</span>`], ['results', 'Results'], ['learners', 'Learners'], ['activity', 'Activity']];
+  if (!t.some(([k]) => k === F.tab)) F.tab = t[0][0];
+  tabs.innerHTML = t.map(([k, l]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${F.tab === k}">${l}</button>`).join('');
+  const live = F.quizzes.filter(x => x.status === 'live').length;
+  end.innerHTML = `<select id="grp" aria-label="Group" style="width:auto">${F.groups.map(g => `<option value="${g.id}" ${g.id === F.group ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>
+    ${live ? `<span class="pill live">${live} live</span>` : ''}<span class="role">${esc(F.me.name)}${F.me.role === 'admin' ? ' · admin' : ''}</span>
+    <button class="btn sm" data-act="f-panel">${F.me.role === 'admin' ? 'Accounts' : 'My account'}</button><button class="btn sm" data-act="f-logout">Log out</button>`;
+  const body = F.tab === 'bank' ? bankView() : F.tab === 'quizzes' ? linksCard() + quizzesView() : F.tab === 'results' ? resultsView() : F.tab === 'learners' ? learnersView() : F.tab === 'activity' ? activityView() : studentsView();
+  v.innerHTML = accountsPanel() + body;
+  bindFaculty();
+}
+function bindFaculty(){
+  const on = (id, ev, fn) => { const el = $('#' + id); if (el) el['on' + ev] = fn; };
+  ['students', 'bank'].forEach(kind => {
+    const inp = $('#file-' + kind); if (!inp) return;
+    inp.onchange = () => inp.files[0] && handleUpload(kind, inp.files[0]);
+    const dz = document.querySelector(`[data-drop="${kind}"]`);
+    dz.ondragover = e => { e.preventDefault(); dz.classList.add('over'); };
+    dz.ondragleave = () => dz.classList.remove('over');
+    dz.ondrop = e => { e.preventDefault(); dz.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) handleUpload(kind, f); };
+  });
+  document.querySelectorAll('input[name="mode-s"]').forEach(r => r.onchange = () => { F.pending.mode = r.value; renderFaculty(); });
+  const keep = id => { const el = $('#' + id), pos = el.selectionStart; renderFaculty(); const n = $('#' + id); if (n){ n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } };
+  on('roster-q', 'input', e => { F.rosterFilter = e.target.value; keep('roster-q'); });
+  on('bank-q', 'input', e => { F.bankFilter.q = e.target.value; keep('bank-q'); });
+  on('bank-topic', 'change', e => { F.bankFilter.topic = e.target.value; renderFaculty(); });
+  on('bank-diff', 'change', e => { F.bankFilter.diff = e.target.value; renderFaculty(); });
+  on('b-title', 'input', e => F.builder.title = e.target.value);
+  on('b-count', 'input', e => F.builder.count = e.target.value); on('b-count', 'change', () => renderFaculty());
+  on('b-duration', 'input', e => F.builder.duration = e.target.value);
+  on('b-diff', 'change', e => { F.builder.diff = e.target.value; renderFaculty(); });
+  on('b-shuffle', 'change', e => F.builder.shuffle = e.target.checked);
+  on('b-penalty', 'input', e => F.builder.penalty = e.target.value);
+  on('b-free', 'input', e => F.builder.free = e.target.value);
+  on('b-maxv', 'input', e => F.builder.maxV = e.target.value);
+  document.querySelectorAll('[data-topic]').forEach(c => c.onchange = () => { const t = c.dataset.topic; F.builder.topics = c.checked ? [...F.builder.topics, t] : F.builder.topics.filter(x => x !== t); renderFaculty(); });
+  document.querySelectorAll('[data-div]').forEach(c => c.onchange = () => { const d = c.dataset.div; F.builder.divisions = c.checked ? [...F.builder.divisions, d] : F.builder.divisions.filter(x => x !== d); renderFaculty(); });
+  on('r-quiz', 'change', e => { F.resultsQuiz = e.target.value; renderFaculty(); });
+  on('la-scope', 'change', e => { F.la.scope = e.target.value; renderFaculty(); });
+  on('la-lo', 'change', e => { F.la.lo = Math.min(Math.max(0, +e.target.value || 0), F.la.hi); renderFaculty(); });
+  on('la-hi', 'change', e => { F.la.hi = Math.max(Math.min(100, +e.target.value || 0), F.la.lo); renderFaculty(); });
+  on('grp', 'change', async e => {
+    F.group = e.target.value; store('qd.group', F.group); F.pending = null; F.pins = null; F.activity = null; F.resultsQuiz = null; F.builder.divisions = [];
+    history.replaceState(null, '', `/${F.resultsOnly ? 'r' : 'f'}/${F.group}`); await loadAll(); renderFaculty();
+  });
+  on('fa-pass', 'keydown', e => { if (e.key === 'Enter') facultyAct(F.authMode === 'signup' ? 'f-signup' : 'f-login', $(`[data-act="${F.authMode === 'signup' ? 'f-signup' : 'f-login'}"]`)); });
+  if (!F.me && !document.activeElement?.matches?.('input')) ($('#fa-email') || $('#fa-name') || $('#fa-new'))?.focus();
+}
+async function facultyAct(a, el){
+  const id = el?.dataset.id, v = el?.dataset.v;
+  const guard = async fn => { if (el) el.disabled = true; try { await fn(); } catch (e){ toast(errMsg(e)); } finally { if (el) el.disabled = false; } };
+  switch (a){
+    case 'f-mode': F.authMode = v; F.authErr = ''; renderFaculty(); break;
+    case 'f-login': await guard(async () => {
+      const { data, error } = await sb.auth.signInWithPassword({ email: $('#fa-email').value.trim(), password: $('#fa-pass').value });
+      if (error){ F.authErr = error.message === 'Invalid login credentials' ? 'Wrong email or password.' : error.message; return renderFaculty(); }
+      F.user = data.user; F.authErr = ''; await loadMe(); if (F.me?.status === 'active') logAct('Logged in'); renderFaculty(); }); break;
+    case 'f-signup': await guard(async () => {
+      const email = $('#fa-email').value.trim(), password = $('#fa-pass').value;
+      if (password.length < 8){ F.authErr = 'Use at least 8 characters for the password.'; return renderFaculty(); }
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
+      if (error){ F.authErr = error.message; return renderFaculty(); }
+      if (!data.session){ F.authErr = ''; F.authMode = 'signin'; toast('Check your email to confirm your account, then log in.'); return renderFaculty(); }
+      F.user = data.user; F.authErr = ''; await loadMe(); renderFaculty(); }); break;
+    case 'f-forgot': await guard(async () => {
+      const { error } = await sb.auth.resetPasswordForEmail($('#fa-email').value.trim(), { redirectTo: location.origin + location.pathname });
+      F.authErr = error ? error.message : ''; if (!error){ toast('If that email has an account, a reset link is on its way.'); F.authMode = 'signin'; } renderFaculty(); }); break;
+    case 'f-recover': await guard(async () => {
+      const p = $('#fa-new').value; if (p.length < 8){ F.authErr = 'Use at least 8 characters.'; return renderFaculty(); }
+      const { error } = await sb.auth.updateUser({ password: p }); if (error){ F.authErr = error.message; return renderFaculty(); }
+      F.recovery = false; F.authErr = ''; const { data } = await sb.auth.getUser(); F.user = data.user; await loadMe(); toast('Password changed.'); renderFaculty(); }); break;
+    case 'f-register': await guard(async () => { await rpc('register_faculty', { p_name: $('#fa-name').value }); F.authErr = ''; await loadMe(); renderFaculty(); }); break;
+    case 'f-reload': await loadMe(); renderFaculty(); break;
+    case 'f-logout': if (F.me?.status === 'active') await logAct('Logged out'); await sb.auth.signOut(); F.user = null; F.me = null; F.panel = false; renderFaculty(); break;
+    case 'f-panel': F.panel = !F.panel; F.authErr = ''; if (F.panel && F.me.role === 'admin') F.faculty = await q(sb.from('faculty').select('*').order('created_at')).catch(() => F.faculty); renderFaculty(); break;
+    case 'f-my-pass': await guard(async () => { const p = $('#my-new').value; if (p.length < 8){ F.authErr = 'Use at least 8 characters.'; return renderFaculty(); } const { error } = await sb.auth.updateUser({ password: p }); if (error) throw error; F.authErr = ''; logAct('Changed own password'); toast('Password changed.'); renderFaculty(); }); break;
+    case 'f-acct': await guard(async () => { const t = F.faculty.find(x => x.user_id === id); await q(sb.from('faculty').update({ status: v, approved_by: F.user.id }).eq('user_id', id)); logAct(v === 'active' ? (t.status === 'pending' ? 'Approved faculty' : 'Enabled account') : 'Disabled account', `${t.name} (${t.email})`); F.faculty = await q(sb.from('faculty').select('*').order('created_at')); renderFaculty(); }); break;
+    case 'f-role': await guard(async () => { const t = F.faculty.find(x => x.user_id === id); await q(sb.from('faculty').update({ role: v }).eq('user_id', id)); logAct(v === 'admin' ? 'Made administrator' : 'Made faculty', `${t.name} (${t.email})`); F.faculty = await q(sb.from('faculty').select('*').order('created_at')); renderFaculty(); }); break;
+    case 'f-acct-rm': await guard(async () => { const t = F.faculty.find(x => x.user_id === id); await q(sb.from('faculty').delete().eq('user_id', id)); logAct('Removed account', `${t.name} (${t.email})`); F.confirm = null; F.faculty = await q(sb.from('faculty').select('*').order('created_at')); renderFaculty(); }); break;
+    case 'f-confirm': F.confirm = v; renderFaculty(); break;
+    case 'f-confirm-no': F.confirm = null; renderFaculty(); break;
+    case 'f-cancel-pending': F.pending = null; renderFaculty(); break;
+    case 'f-save-pending': await guard(savePending); break;
+    case 'f-read-paste': { const t = $('#paste-' + el.dataset.kind).value; if (!t.trim()) return toast('Paste rows first, with the header row on top.'); handleUpload(el.dataset.kind, t); break; }
+    case 'f-pins-missing': await guard(() => makePins(F.students.filter(s => !s.pin_set))); break;
+    case 'f-pins-all': F.confirm = null; await guard(() => makePins(F.students)); break;
+    case 'f-pin-one': await guard(() => makePins(F.students.filter(s => s.id === id))); break;
+    case 'f-pins-close': F.pins = null; renderFaculty(); break;
+    case 'f-pins-save': savePinsWorkbook(); break;
+    case 'f-rm-student': await guard(async () => { const s = F.students.find(x => x.id === id); await q(sb.from('students').delete().eq('id', id)); logAct('Removed student', s?.roll); F.confirm = null; await loadAll(); renderFaculty(); }); break;
+    case 'f-rm-q': await guard(async () => { const x = F.bank.find(y => y.id === id); await q(sb.from('questions').delete().eq('id', id)); logAct('Removed question', x?.text); F.confirm = null; await loadAll(); renderFaculty(); }); break;
+    case 'f-create-quiz': await guard(createQuiz); break;
+    case 'f-live': await guard(async () => { const x = F.quizzes.find(y => y.id === id); await rpc('set_quiz_status', { p_quiz: id, p_status: 'live' }); logAct(x.status === 'closed' ? 'Reopened quiz' : 'Started quiz', x.title); toast('Quiz is live. Students on its list can start now.'); await loadAll(); renderFaculty(); }); break;
+    case 'f-close': await guard(async () => { const x = F.quizzes.find(y => y.id === id); await rpc('set_quiz_status', { p_quiz: id, p_status: 'closed' }); logAct('Closed quiz', x.title); toast('Quiz closed. Anyone still answering was submitted.'); await loadAll(); renderFaculty(); }); break;
+    case 'f-release': await guard(async () => { const x = F.quizzes.find(y => y.id === id); await q(sb.from('quizzes').update({ released: !x.released }).eq('id', id)); logAct(x.released ? 'Hid results' : 'Released results', x.title); toast(x.released ? 'Results hidden from students.' : 'Results released. Students can now see scores and correct answers.'); await loadAll(); renderFaculty(); }); break;
+    case 'f-del-quiz': await guard(async () => { const x = F.quizzes.find(y => y.id === id); await q(sb.from('quizzes').delete().eq('id', id)); logAct('Deleted quiz', x.title); F.confirm = null; await loadAll(); renderFaculty(); }); break;
+    case 'f-results': F.resultsQuiz = id; F.tab = 'results'; renderFaculty(); break;
+    case 'f-activity-refresh': F.activity = null; renderFaculty(); break;
+    case 'f-export': exportResultsCSV(F.quizzes.find(x => x.id === F.resultsQuiz)); break;
+    case 'f-la-export': exportLearnersCSV(); break;
+    case 'f-save-all': await guard(saveAllWorkbook); break;
+    case 'f-copy': { const box = $('#' + el.dataset.box);
+      navigator.clipboard.writeText(box.value).then(() => toast('Link copied.')).catch(() => { box.focus(); box.select(); toast('Press Ctrl+C (Cmd+C on Mac) to copy.'); }); break; }
+  }
+}
+async function createQuiz(){
+  const b = F.builder, pool = builderPool();
+  if (!b.title.trim()) return toast('Give the quiz a title.');
+  const n = Math.min(Math.max(1, +b.count || pool.length), pool.length);
+  const picked = shuffled(pool, Math.random).slice(0, n);
+  const assigned = F.students.filter(s => !b.divisions.length || b.divisions.includes(s.division));
+  if (!assigned.length) return toast('Upload this group\'s student list first.');
+  const row = { group_id: F.group, title: b.title.trim(), duration_min: Math.max(1, +b.duration || 20), shuffle: !!b.shuffle,
+    proctor: { penalty: Math.max(0, +b.penalty || 0), free: Math.max(0, Math.floor(+b.free || 0)), maxV: Math.max(0, Math.floor(+b.maxV || 0)) },
+    questions: picked.map(x => ({ id: x.id, text: x.text, options: x.options, answer: x.answer, marks: +x.marks, topic: x.topic })),
+    total_marks: picked.reduce((a, x) => a + (+x.marks || 1), 0), assigned_rolls: assigned.map(s => s.roll), divisions: b.divisions.slice(),
+    created_by: F.user.id, created_by_name: F.me.name };
+  await q(sb.from('quizzes').insert(row));
+  logAct('Created quiz', `${row.title}: ${picked.length} questions, ${row.duration_min} min, ${assigned.length} students`);
+  toast(`Created "${row.title}" as a draft. Press Go live when students are ready.`);
+  F.builder.title = ''; await loadAll(); renderFaculty();
+}
+
+/* ---------- exports ---------- */
+async function saveFile(filename, wbOrText){
+  try { if (typeof wbOrText === 'string'){ const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([wbOrText], { type: 'text/csv' })); a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); } else XLSX.writeFile(wbOrText, filename); toast(`Saved ${filename}.`); }
+  catch { toast('Couldn\'t save the file.'); }
+}
+const csvCell = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+function exportResultsCSV(quiz){
+  const { rows, missing } = results(quiz), rm = new Map(F.students.map(s => [s.roll, s]));
+  const lines = [['Rank','Roll No','Name','Division','Final score','Out of','Percent','Marks before penalty','Tab switches','Time away (s)','Violations','Marks deducted','Correct','Attempted','Status','Time taken','Submitted at'].join(',')];
+  rows.forEach((r, i) => lines.push([i + 1, r.roll, r.name, r.division, r.score, quiz.total_marks, r.pct, r.raw, r.tabs, r.awaySecs, r.viol, r.ded, r.correct, r.attempted, r.submitted ? (r.auto ? 'Auto-submitted' : 'Submitted') : 'In progress', r.taken ? fmtTime(r.taken) : '', r.submittedAt ? new Date(r.submittedAt).toISOString() : ''].map(csvCell).join(',')));
+  missing.forEach(roll => lines.push(['', roll, rm.get(roll)?.name || '', rm.get(roll)?.division || '', 0, quiz.total_marks, 0, 0, 0, 0, 0, 0, 0, 0, 'Absent', '', ''].map(csvCell).join(',')));
+  logAct('Exported results', quiz.title);
+  saveFile(`Group-${F.group}-${quiz.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-')}-results.csv`, lines.join('\n'));
+}
+function exportLearnersCSV(){
+  const d = learnerData(), name = { slow: 'Slow', average: 'Average', advanced: 'Advanced' };
+  const lines = [['Roll No','Name','Division','Learner level','Average %','Quizzes submitted','Weakest topic','Weakest %','Strongest topic','Strongest %'].join(',')];
+  d.rows.forEach(r => lines.push([r.roll, r.name, r.division, name[r.level], r.avg, r.n, r.weakest?.t || '', r.weakest ? Math.round(r.weakest.acc * 100) : '', r.strongest?.t || '', r.strongest ? Math.round(r.strongest.acc * 100) : ''].map(csvCell).join(',')));
+  d.noData.forEach(r => lines.push([r, '', '', 'Not assessed', '', 0, '', '', '', ''].map(csvCell).join(',')));
+  lines.push('', `Thresholds,Slow below ${F.la.lo}%,Advanced from ${F.la.hi}%`);
+  logAct('Exported learner levels');
+  saveFile(`Group-${F.group}-learner-levels.csv`, lines.join('\n'));
+}
+function savePinsWorkbook(){
+  const wb = XLSX.utils.book_new(), ws = XLSX.utils.aoa_to_sheet([[`Group ${F.group} · student PINs · student link ${linkFor('s', F.group)}`], [], ['Roll No', 'Name', 'Division', 'PIN'], ...F.pins.map(p => [p.roll, p.name, p.division, p.pin])]);
+  ws['!cols'] = [{ wch: 16 }, { wch: 26 }, { wch: 9 }, { wch: 10 }];
+  XLSX.utils.book_append_sheet(wb, ws, 'PINs');
+  saveFile(`Group-${F.group}-student-PINs-${today()}.xlsx`, wb);
+}
+async function saveAllWorkbook(){
+  if (!window.XLSX) return toast('The Excel writer did not load. Use Export CSV instead.');
+  await loadAll();
+  let activity = [];
+  try { activity = await q(sb.from('activity').select('*').or(`group_id.eq.${F.group},group_id.is.null`).order('at', { ascending: false }).limit(1000)); } catch {}
+  const when = t => t ? new Date(t).toLocaleString() : '', rm = new Map(F.students.map(s => [s.roll, s]));
+  const wb = XLSX.utils.book_new(), used = new Set();
+  const add = (name, rows, widths) => { let n = name.replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 31).trim() || 'Sheet', base = n, i = 2; while (used.has(n.toLowerCase())) n = base.slice(0, 28) + ' ' + i++; used.add(n.toLowerCase()); const ws = XLSX.utils.aoa_to_sheet(rows); if (widths) ws['!cols'] = widths.map(w => ({ wch: w })); XLSX.utils.book_append_sheet(wb, ws, n); };
+  const quizzes = F.quizzes.slice().sort((a, b) => ms(a.created_at) - ms(b.created_at)), R = new Map(quizzes.map(x => [x.id, results(x)]));
+  const summary = [[`Quiz Desk · Group ${F.group} · all results`], [`Saved ${when(new Date())} by ${F.me.name}`], [`Students: ${F.students.length} · Shared bank: ${F.bank.length} questions · Quizzes: ${quizzes.length}`], [],
+    ['Quiz', 'Status', 'Created by', 'Started by', 'Started at', 'Questions', 'Total marks', 'Minutes', 'Assigned', 'Submitted', 'Not started', 'Average %', 'Highest', 'Lowest', 'Scored 40%+', 'Tab switches', 'Students with violations', 'Results released']];
+  quizzes.forEach(x => { const { rows, missing } = R.get(x.id), done = rows.filter(r => r.submitted), sc = done.map(r => r.score);
+    summary.push([x.title, x.status, x.created_by_name, x.started_by_name, when(x.started_at), x.questions.length, x.total_marks, x.duration_min, x.assigned_rolls.length, done.length, missing.length,
+      done.length ? Math.round(done.reduce((s, r) => s + r.pct, 0) / done.length * 10) / 10 : '', sc.length ? Math.max(...sc) : '', sc.length ? Math.min(...sc) : '', done.filter(r => r.pct >= 40).length, rows.reduce((s, r) => s + r.tabs, 0), rows.filter(r => r.viol).length, x.released ? 'Yes' : 'No']); });
+  add('Summary', summary, [34, 9, 18, 18, 20, 10, 11, 8, 9, 10, 11, 10, 8, 8, 11, 12, 14, 10]);
+  quizzes.forEach((x, qi) => { const { rows, missing } = R.get(x.id);
+    const out = [[x.title], [`${x.questions.length} questions · ${x.total_marks} marks · ${x.duration_min} min · ${x.status}${x.started_by_name ? ' · started by ' + x.started_by_name + ' at ' + when(x.started_at) : ''}`], [],
+      ['Rank', 'Roll No', 'Name', 'Division', 'Final score', 'Out of', 'Percent', 'Marks before penalty', 'Marks deducted', 'Correct', 'Attempted', 'Tab switches', 'Time away (s)', 'Violations', 'Status', 'Time taken', 'Submitted at']];
+    rows.forEach((r, i) => out.push([i + 1, r.roll, r.name, r.division, r.score, x.total_marks, r.pct, r.raw, r.ded, r.correct, r.attempted, r.tabs, r.awaySecs, r.viol, r.submitted ? (r.auto ? 'Auto-submitted' : 'Submitted') : 'In progress', r.taken ? fmtTime(r.taken) : '', when(r.submittedAt)]));
+    missing.forEach(roll => out.push(['', roll, rm.get(roll)?.name || '', rm.get(roll)?.division || '', '', x.total_marks, '', '', '', '', '', '', '', '', 'Not started', '', '']));
+    add(`${qi + 1} ${x.title}`, out, [6, 14, 22, 9, 10, 7, 8, 12, 10, 8, 9, 11, 11, 10, 14, 10, 20]); });
+  const qa = [['Quiz', 'Q#', 'Question', 'Topic', 'Marks', 'Correct option', 'Correct answer', 'Students answered', '% correct']];
+  quizzes.forEach(x => { const { rows, perQ, key } = R.get(x.id), done = rows.filter(r => r.submitted);
+    perQ.forEach((p, i) => qa.push([x.title, i + 1, p.q.text, p.q.topic || 'General', p.q.marks, LETTERS[key[p.q.id]] || '', p.q.options[key[p.q.id]] ?? '', done.filter(r => r.answers[p.q.id] !== undefined).length, done.length ? Math.round(p.rate * 100) : ''])); });
+  add('Question analysis', qa, [28, 5, 70, 18, 7, 9, 30, 10, 10]);
+  const d = learnerData('all'), lvl = { slow: 'Slow', average: 'Average', advanced: 'Advanced' };
+  const ll = [[`Learner levels · average across all quizzes · slow below ${F.la.lo}%, advanced from ${F.la.hi}% · marks before proctoring deductions`], [], ['Roll No', 'Name', 'Division', 'Learner level', 'Average %', 'Quizzes submitted', 'Weakest topic', 'Weakest %', 'Strongest topic', 'Strongest %', 'Suggested action']];
+  d.rows.forEach(r => ll.push([r.roll, r.name, r.division, lvl[r.level], r.avg, r.n, r.weakest?.t || '', r.weakest ? Math.round(r.weakest.acc * 100) : '', r.strongest?.t || '', r.strongest ? Math.round(r.strongest.acc * 100) : '', LEVELS.find(L => L.k === r.level).action]));
+  d.noData.forEach(r => ll.push([r, rm.get(r)?.name || '', rm.get(r)?.division || '', 'Not assessed', '', 0, '', '', '', '', '']));
+  add('Learner levels', ll, [14, 22, 9, 13, 10, 10, 20, 10, 20, 11, 60]);
+  const byL = Object.fromEntries(LEVELS.map(L => [L.k, d.rows.filter(r => r.level === L.k)])), pb = a => a === null ? '' : Math.round(a * 100);
+  add('Topic by level', [['Topic accuracy (%) by learner level'], [], ['Topic', 'Slow', 'Average', 'Advanced', 'Whole class'], ...d.topics.map(t => [t, ...LEVELS.map(L => pb(d.topicAcc(byL[L.k], t))), pb(d.topicAcc(d.rows, t))])], [26, 9, 9, 10, 12]);
+  const vio = [['Quiz', 'Roll No', 'Name', 'Time', 'Violation', 'Seconds away']];
+  quizzes.forEach(x => R.get(x.id).rows.forEach(r => r.violations.forEach(v => vio.push([x.title, r.roll, r.name, when(v.at), VIOL_LABEL[v.t] || v.t, v.secs || '']))));
+  add('Violations', vio, [28, 14, 22, 20, 30, 12]);
+  add('Students', [['Roll No', 'Name', 'Email', 'Division', 'PIN set'], ...F.students.map(s => [s.roll, s.name, s.email, s.division, s.pin_set ? 'Yes' : 'No'])], [14, 24, 30, 9, 8]);
+  add('Activity', [['When', 'Faculty', 'Action', 'Details'], ...activity.map(e => [when(e.at), e.name, e.action, e.detail])], [20, 22, 24, 60]);
+  const filename = `Group-${F.group}-all-results-${today()}.xlsx`;
+  logAct('Saved all results', `${quizzes.length} quizzes, ${filename}`);
+  saveFile(filename, wb);
+}
+
+/* ======================================================================
+   start
+   ====================================================================== */
+document.addEventListener('click', e => {
+  const tab = e.target.closest('[data-tab]');
+  if (tab){ F.tab = tab.dataset.tab; if (!F.resultsOnly) store('qd.tab', F.tab); F.pending = null; renderFaculty(); return; }
+  const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+  const a = b.dataset.act;
+  if (a.startsWith('s-')) studentAct(a, b); else if (a.startsWith('f-')) facultyAct(a, b);
+});
+(function start(){
+  if (!sb){ $('#view').innerHTML = `<section class="panel"><div class="empty"><h3>Quiz Desk isn't connected yet</h3><p>${window.supabase ? 'The database settings (config.js) are missing.' : 'The database library could not load. Check your internet connection and reload.'}</p></div></section>`; return; }
+  if (ROUTE.mode === 'home'){ location.replace('/'); return; }
+  document.title = `Quiz Desk · Group ${ROUTE.group || F.group} · ${ROUTE.mode === 's' ? 'Student' : ROUTE.mode === 'r' ? 'Results' : 'Faculty'}`;
+  if (ROUTE.mode === 's'){ if (!ST.group){ $('#view').innerHTML = '<section class="panel"><div class="empty"><h3>This link is missing its group</h3><p>Ask your teacher for your group\'s student link.</p></div></section>'; return; } studentBoot(); }
+  else facultyBoot();
+})();
+</script>
+</body>
+</html>

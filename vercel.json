@@ -6,9 +6,44 @@
   "outputDirectory": "docs",
   "cleanUrls": true,
   "headers": [
-    { "source": "/(.*)", "headers": [
-      { "key": "X-Content-Type-Options", "value": "nosniff" },
-      { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
-    ] }
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/s/:group",
+      "destination": "/app"
+    },
+    {
+      "source": "/f/:group",
+      "destination": "/app"
+    },
+    {
+      "source": "/r/:group",
+      "destination": "/app"
+    },
+    {
+      "source": "/f",
+      "destination": "/app"
+    },
+    {
+      "source": "/r",
+      "destination": "/app"
+    }
   ]
 }

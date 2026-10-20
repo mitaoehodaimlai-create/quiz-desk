@@ -907,7 +907,7 @@ function resultsView(){
   const rm = new Map(S.roster.map(s => [s.roll, s]));
   return `<section class="panel"><div class="panel-head"><div><div class="label">Results</div><h2>${esc(quiz.title)}</h2></div>
       <div class="row"><select id="r-quiz" aria-label="Choose quiz" style="width:auto;max-width:100%">${S.quizzes.map(q => `<option value="${q.id}" ${q.id === quiz.id ? 'selected' : ''}>${esc(q.title)}</option>`).join('')}</select>
-      <button class="btn" data-act="export" ${rows.length || missing.length ? '' : 'disabled'}>Export CSV</button></div></div>
+      <button class="btn" data-act="export" ${rows.length || missing.length ? '' : 'disabled'}>Export CSV</button><button class="btn primary" data-act="save-all">Save all results (Excel)</button></div></div>
     <div class="stats">
       <div class="stat"><span class="label">Submitted</span><b>${done.length}<span class="muted" style="font-size:1rem"> / ${quiz.allowedRolls.length}</span></b></div>
       <div class="stat"><span class="label">Answering now</span><b>${rows.length - done.length}</b></div>
@@ -993,7 +993,7 @@ function learnersView(){
       <label class="field"><span>Slow below (%)</span><input type="number" id="la-lo" min="0" max="100" value="${S.la.lo}"></label>
       <label class="field"><span>Advanced from (%)</span><input type="number" id="la-hi" min="0" max="100" value="${S.la.hi}"></label></div>`;
   const head = `<section class="panel"><div class="panel-head"><div><div class="label">Learner analytics · marks before proctoring deductions</div><h2>Slow, average and advanced learners</h2></div>
-      <button class="btn" data-act="la-export" ${total ? '' : 'disabled'}>Export CSV</button></div>${controls}`;
+      <div class="row"><button class="btn" data-act="la-export" ${total ? '' : 'disabled'}>Export CSV</button><button class="btn primary" data-act="save-all">Save all results (Excel)</button></div></div>${controls}`;
   if (!total) return head + `<div class="empty"><h3>No submitted attempts yet</h3><p>Students are grouped here after they submit.</p></div></section>`;
   const dist = `<div style="display:flex;flex-direction:column;gap:8px">
       <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--line)" role="img" aria-label="${LEVELS.map(L => `${L.label}: ${by[L.k].length}`).join(', ')}">
@@ -1015,6 +1015,95 @@ function learnersView(){
     <p class="small">${d.noData.map(r => `<span class="mono">${esc(r)}</span>${rm.get(r)?.name ? ' ' + esc(rm.get(r).name) : ''}`).join(' · ')}</p></section>` : '';
   return head + dist + stats + `</section>` + groups + topicTable + none;
 }
+/* ---------- save everything for this group as one Excel workbook ---------- */
+async function saveAllWorkbook(){
+  if (!window.XLSX) return toast('The Excel writer did not load. Use Export CSV on each tab instead.');
+  toast('Preparing the workbook…');
+  // Read the latest attempts and activity once, so the file is complete whichever tab is open.
+  try { const snap = await S.db.collection('subs').get(); S.subs = snap.docs.map(d => ({ id: d.id, ...d.data() })); } catch {}
+  let activity = [];
+  try { const snap = await S.db.collection('staff/log/entries').orderBy('at', 'desc').limit(1000).get(); activity = snap.docs.map(d => d.data()); } catch {}
+  const now = new Date(), stamp = now.toISOString().slice(0, 10);
+  const rm = new Map(S.roster.map(s => [s.roll, s]));
+  const when = t => t ? new Date(t).toLocaleString() : '';
+  const wb = XLSX.utils.book_new(), used = new Set();
+  const add = (name, rows, widths) => {
+    let n = name.replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 31).trim() || 'Sheet', base = n, i = 2;
+    while (used.has(n.toLowerCase())) n = base.slice(0, 28) + ' ' + i++;
+    used.add(n.toLowerCase());
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    if (widths) ws['!cols'] = widths.map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, n);
+  };
+  const quizzes = S.quizzes.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const R = new Map(quizzes.map(q => [q.id, results(q)]));
+
+  // 1. Summary
+  const summary = [[`Quiz Desk · ${GROUP.name} · all results`], [`Saved ${when(now)} by ${S.me?.name || 'faculty'}`], [`Students on list: ${S.roster.length} · Questions in bank: ${S.bank.length} · Quizzes: ${quizzes.length}`], [],
+    ['Quiz', 'Status', 'Created by', 'Started by', 'Started at', 'Questions', 'Total marks', 'Minutes', 'Assigned', 'Submitted', 'Not started', 'Average %', 'Highest', 'Lowest', 'Scored 40%+', 'Tab switches', 'Students with violations', 'Results released']];
+  quizzes.forEach(q => {
+    const { rows, missing } = R.get(q.id), done = rows.filter(r => r.submitted), sc = done.map(r => r.score);
+    summary.push([q.title, q.status, q.createdByName || '', q.startedByName || '', when(q.startedAt), q.questions.length, q.totalMarks, q.durationMin, q.allowedRolls.length, done.length, missing.length,
+      done.length ? Math.round(done.reduce((s, r) => s + r.pct, 0) / done.length * 10) / 10 : '', sc.length ? Math.max(...sc) : '', sc.length ? Math.min(...sc) : '',
+      done.filter(r => r.pct >= 40).length, rows.reduce((s, r) => s + r.tabs, 0), rows.filter(r => r.viol).length, q.released ? 'Yes' : 'No']);
+  });
+  add('Summary', summary, [34, 9, 18, 18, 20, 10, 11, 8, 9, 10, 11, 10, 8, 8, 11, 12, 14, 10]);
+
+  // 2. One results sheet per quiz
+  quizzes.forEach((q, qi) => {
+    const { rows, missing } = R.get(q.id);
+    const out = [[q.title], [`${q.questions.length} questions · ${q.totalMarks} marks · ${q.durationMin} min · status ${q.status}${q.startedByName ? ' · started by ' + q.startedByName + ' at ' + when(q.startedAt) : ''}`], [],
+      ['Rank', 'Roll No', 'Name', 'Division', 'Final score', 'Out of', 'Percent', 'Marks before penalty', 'Marks deducted', 'Correct', 'Attempted', 'Tab switches', 'Time away (s)', 'Violations', 'Status', 'Time taken', 'Submitted at', 'Flags']];
+    rows.forEach((r, i) => out.push([i + 1, r.roll, r.name, r.division, r.score, q.totalMarks, r.pct, r.raw, r.ded, r.correct, r.attempted, r.tabs, r.awaySecs, r.viol,
+      r.submitted ? (r.auto ? 'Auto-submitted' : 'Submitted') : 'In progress', r.taken ? fmtTime(r.taken) : '', when(r.submittedAt), [r.dup ? 'Roll used from two accounts' : '', !r.onList ? 'Not on this quiz list' : ''].filter(Boolean).join('; ')]));
+    missing.forEach(roll => out.push(['', roll, rm.get(roll)?.name || '', rm.get(roll)?.division || '', '', q.totalMarks, '', '', '', '', '', '', '', '', 'Not started', '', '', '']));
+    add(`${qi + 1} ${q.title}`, out, [6, 14, 22, 9, 10, 7, 8, 12, 10, 8, 9, 11, 11, 10, 14, 10, 20, 24]);
+  });
+
+  // 3. Question analysis (full statements)
+  const qa = [['Quiz', 'Q#', 'Question', 'Topic', 'Marks', 'Correct option', 'Correct answer', 'Students answered', '% correct']];
+  quizzes.forEach(q => {
+    const { rows, perQ, key } = R.get(q.id), done = rows.filter(r => r.submitted);
+    perQ.forEach((p, i) => qa.push([q.title, i + 1, p.q.text, p.q.topic || 'General', p.q.marks, LETTERS[key[p.q.id]] || '', p.q.options[key[p.q.id]] ?? '',
+      done.filter(r => r.answers[p.q.id] !== undefined).length, done.length ? Math.round(p.rate * 100) : '']));
+  });
+  add('Question analysis', qa, [28, 5, 70, 18, 7, 9, 30, 10, 10]);
+
+  // 4. Learner levels across all quizzes, and 5. topic accuracy by level
+  const keepScope = S.la.scope; S.la.scope = 'all';
+  const d = learnerData(); S.la.scope = keepScope;
+  const lvlName = { slow: 'Slow', average: 'Average', advanced: 'Advanced' };
+  const ll = [[`Learner levels · average across all quizzes · slow below ${S.la.lo}%, advanced from ${S.la.hi}% · marks before proctoring deductions`], [],
+    ['Roll No', 'Name', 'Division', 'Learner level', 'Average %', 'Quizzes submitted', 'Weakest topic', 'Weakest %', 'Strongest topic', 'Strongest %', 'Suggested action']];
+  d.rows.forEach(r => ll.push([r.roll, r.name, r.division, lvlName[r.level], r.avg, r.n, r.weakest?.t || '', r.weakest ? Math.round(r.weakest.acc * 100) : '', r.strongest?.t || '', r.strongest ? Math.round(r.strongest.acc * 100) : '', LEVELS.find(L => L.k === r.level).action]));
+  d.noData.forEach(r => ll.push([r, rm.get(r)?.name || '', rm.get(r)?.division || '', 'Not assessed', '', 0, '', '', '', '', '']));
+  ll.push([], ['Totals', ...LEVELS.map(L => `${lvlName[L.k]}: ${d.rows.filter(r => r.level === L.k).length}`), `Not assessed: ${d.noData.length}`]);
+  add('Learner levels', ll, [14, 22, 9, 13, 10, 10, 20, 10, 20, 11, 60]);
+  const byLvl = Object.fromEntries(LEVELS.map(L => [L.k, d.rows.filter(r => r.level === L.k)]));
+  const pctOrBlank = a => a === null ? '' : Math.round(a * 100);
+  const tb = [['Topic accuracy (%) by learner level'], [], ['Topic', 'Slow', 'Average', 'Advanced', 'Whole class']];
+  d.topics.forEach(t => tb.push([t, ...LEVELS.map(L => pctOrBlank(d.topicAcc(byLvl[L.k], t))), pctOrBlank(d.topicAcc(d.rows, t))]));
+  add('Topic by level', tb, [26, 9, 9, 10, 12]);
+
+  // 6. Every proctoring violation
+  const vio = [['Quiz', 'Roll No', 'Name', 'Time', 'Violation', 'Seconds away']];
+  quizzes.forEach(q => R.get(q.id).rows.forEach(r => r.violations.forEach(v => vio.push([q.title, r.roll, r.name, when(v.at), VIOL_LABEL[v.t] || v.t, v.secs || '']))));
+  add('Violations', vio, [28, 14, 22, 20, 30, 12]);
+
+  // 7. Student list and 8. activity log
+  add('Students', [['Roll No', 'Name', 'Email', 'Division'], ...S.roster.map(s => [s.roll, s.name, s.email, s.division])], [14, 24, 30, 9]);
+  add('Activity', [['When', 'Faculty', 'Username', 'Action', 'Details'], ...activity.map(e => [when(e.at), e.name || '', e.user || '', e.action, e.detail || ''])], [20, 22, 14, 24, 60]);
+
+  const filename = `${GROUP.name.replace(/\s+/g, '-')}-all-results-${stamp}.xlsx`;
+  const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  logAct('Saved all results', `${quizzes.length} quizzes, ${filename}`);
+  if (S.downloads){
+    try { await S.downloads.save({ filename, data: new Uint8Array(data) }); toast(`Saved ${filename}.`); return; }
+    catch (e){ if (e?.code === 'declined') return toast('Save cancelled.'); }
+  }
+  try { XLSX.writeFile(wb, filename); toast(`Saved ${filename}.`); } catch { toast('Couldn\'t save the file from this view.'); }
+}
+
 async function exportLearners(){
   const d = learnerData();
   const cell = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
@@ -1305,6 +1394,7 @@ async function act(a, el){
       navigator.clipboard.writeText(v).then(() => toast(el.dataset.box === 'stu-link' ? 'Student link copied. Send it to this group only.' : 'Faculty link copied.'))
         .catch(() => { box?.focus(); box?.select(); toast('Press Ctrl+C (Cmd+C on Mac) to copy the selected link.'); });
       break; }
+    case 'save-all': el.disabled = true; try { await saveAllWorkbook(); } finally { el.disabled = false; } break;
     case 'la-export': exportLearners(); logAct('Exported learner levels'); break;
     case 'export': { const q = S.quizzes.find(x => x.id === S.resultsQuiz); exportCSV(q); logAct('Exported results', q?.title); break; }
     case 'set-roll': { const v = ($('#s-roll')?.value || '').trim().toUpperCase(); if (!v) return toast('Enter your roll number.');

@@ -13,6 +13,7 @@ It runs as a [claude.ai Artifact](https://claude.ai): a single HTML page with a 
 - Set a quiz live, close it, release results to students, or delete it.
 - Questions are shown in full everywhere (bank, quiz, review, question accuracy), keeping line breaks for code and multi-line questions.
 - Results: live ranking, who is answering now, who hasn't started, accuracy per question, tab switches with time away, proctoring violations, and CSV export.
+- **Save all results (Excel)** on the Results and Learners tabs: one workbook per group with Summary, one results sheet per quiz, Question analysis (full statements, correct answers, % correct), Learner levels, Topic by level, Violations, Students and Activity.
 - Learner analytics: slow, average and advanced learners, from one quiz or averaged across all quizzes. The thresholds are adjustable (defaults: slow below 40%, advanced from 75%). Each student's weakest and strongest topic, topic accuracy for each level, students not yet assessed, a suggested action for each level, and a CSV export. Levels use marks before proctoring deductions.
 
 **Students**

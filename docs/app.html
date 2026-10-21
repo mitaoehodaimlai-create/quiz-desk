@@ -65,7 +65,7 @@ const linkFor = (mode, g) => `${location.origin}/${mode}/${g}`;
 
 /* ---------- Supabase ---------- */
 const CFG = window.QD_CONFIG || {};
-const sb = (window.supabase && CFG.supabaseUrl) ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, { auth: { persistSession: true, storageKey: 'qd-faculty' } }) : null;
+const sb = (window.supabase && CFG.supabaseUrl) ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, { auth: { persistSession: true, storageKey: 'qd-faculty', detectSessionInUrl: true, flowType: 'implicit' } }) : null;
 async function rpc(name, args){ const { data, error } = await sb.rpc(name, args); if (error) throw error; return data; }
 async function q(promise){ const { data, error } = await promise; if (error) throw error; return data; }
 
@@ -395,10 +395,21 @@ async function logAct(action, detail){
   if (!F.me) return;
   try { await sb.from('activity').insert({ user_id: F.user.id, name: F.me.name, group_id: F.group, action, detail: detail || '' }); } catch {}
 }
+// A confirmation or reset link that failed comes back with the reason in the address.
+function linkError(){
+  const p = new URLSearchParams((location.hash || '').replace(/^#/, '') + '&' + location.search.replace(/^\?/, ''));
+  const code = p.get('error_code') || p.get('error'), desc = p.get('error_description');
+  if (!code && !desc) return '';
+  history.replaceState(null, '', location.pathname);
+  if (/otp_expired|expired/i.test(code + ' ' + desc)) return 'That email link has expired or was already used. Log in below; if it says your email is not confirmed, press "Resend confirmation email".';
+  return 'The email link did not work: ' + (desc || code).replace(/\+/g, ' ') + '. Log in below or request a new link.';
+}
 async function facultyBoot(){
+  F.authErr = linkError();
   sb.auth.onAuthStateChange((ev, session) => {
     if (ev === 'PASSWORD_RECOVERY'){ F.recovery = true; renderFaculty(); }
     if (ev === 'SIGNED_OUT'){ F.user = null; F.me = null; renderFaculty(); }
+    if (ev === 'SIGNED_IN' && session?.user && !F.user){ F.user = session.user; loadMe().then(() => { toast('Email confirmed. You are signed in.'); renderFaculty(); }); }
   });
   const { data } = await sb.auth.getSession();
   F.user = data.session?.user || null;
@@ -509,7 +520,7 @@ function authView(){
   return shell(`Faculty login · ${F.resultsOnly ? 'results' : 'quiz platform'} · Group ${esc(F.group)}`, forgot ? 'Reset your password' : up ? 'Create a faculty account' : 'Log in to start the quiz platform', `
     <label class="field"><span>College email</span><input type="text" id="fa-email" inputmode="email" autocomplete="email"></label>
     ${forgot ? '' : `<label class="field"><span>Password${up ? ' (8+ characters)' : ''}</span><input type="password" id="fa-pass" autocomplete="${up ? 'new-password' : 'current-password'}"></label>`}
-    ${err}
+    ${err}${F.unconfirmed && !up && !forgot ? '<div class="row"><button class="btn sm" data-act="f-resend">Resend confirmation email</button></div>' : ''}
     <div class="row"><button class="btn primary" data-act="${forgot ? 'f-forgot' : up ? 'f-signup' : 'f-login'}">${forgot ? 'Email me a reset link' : up ? 'Create account' : 'Log in'}</button></div>
     <div class="row small">${up || forgot ? '<button class="btn ghost sm" data-act="f-mode" data-v="signin">Back to log in</button>' : '<button class="btn ghost sm" data-act="f-mode" data-v="signup">New faculty? Create an account</button><button class="btn ghost sm" data-act="f-mode" data-v="forgot">Forgot password?</button>'}</div>`);
 }
@@ -792,15 +803,23 @@ async function facultyAct(a, el){
     case 'f-mode': F.authMode = v; F.authErr = ''; renderFaculty(); break;
     case 'f-login': await guard(async () => {
       const { data, error } = await sb.auth.signInWithPassword({ email: $('#fa-email').value.trim(), password: $('#fa-pass').value });
-      if (error){ F.authErr = error.message === 'Invalid login credentials' ? 'Wrong email or password.' : error.message; return renderFaculty(); }
+      if (error){
+        F.unconfirmed = /not confirmed/i.test(error.message) ? $('#fa-email').value.trim() : '';
+        F.authErr = error.message === 'Invalid login credentials' ? 'Wrong email or password.' : F.unconfirmed ? 'Your email is not confirmed yet. Open the confirmation email from Supabase (check spam too) and click its link, or send a new one.' : error.message;
+        return renderFaculty(); }
+      F.unconfirmed = '';
       F.user = data.user; F.authErr = ''; await loadMe(); if (F.me?.status === 'active') logAct('Logged in'); renderFaculty(); }); break;
     case 'f-signup': await guard(async () => {
       const email = $('#fa-email').value.trim(), password = $('#fa-pass').value;
       if (password.length < 8){ F.authErr = 'Use at least 8 characters for the password.'; return renderFaculty(); }
       const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
-      if (error){ F.authErr = error.message; return renderFaculty(); }
-      if (!data.session){ F.authErr = ''; F.authMode = 'signin'; toast('Check your email to confirm your account, then log in.'); return renderFaculty(); }
+      if (error){ F.authErr = /rate limit|security purposes/i.test(error.message) ? 'Too many sign-up emails sent recently. Wait a few minutes and try again.' : /registered/i.test(error.message) ? 'That email already has an account. Log in instead, or use "Forgot password?".' : error.message; return renderFaculty(); }
+      if (!data.session){ F.authMode = 'signin'; F.unconfirmed = email; F.authErr = `Account created. Supabase has emailed ${email} a confirmation link (check spam). Click it, then come back and log in.`; return renderFaculty(); }
       F.user = data.user; F.authErr = ''; await loadMe(); renderFaculty(); }); break;
+    case 'f-resend': await guard(async () => {
+      const { error } = await sb.auth.resend({ type: 'signup', email: F.unconfirmed, options: { emailRedirectTo: location.origin + location.pathname } });
+      F.authErr = error ? (/rate limit|security purposes/i.test(error.message) ? 'Too many emails sent recently. Wait a few minutes, or ask the Supabase owner to turn off email confirmation.' : error.message) : `A new confirmation email is on its way to ${F.unconfirmed}. Check spam too.`;
+      renderFaculty(); }); break;
     case 'f-forgot': await guard(async () => {
       const { error } = await sb.auth.resetPasswordForEmail($('#fa-email').value.trim(), { redirectTo: location.origin + location.pathname });
       F.authErr = error ? error.message : ''; if (!error){ toast('If that email has an account, a reset link is on its way.'); F.authMode = 'signin'; } renderFaculty(); }); break;
